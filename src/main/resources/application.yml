@@ -16,3 +16,20 @@ management:
       # Boot 4의 기본 probe 그룹을 꺼서 응답을 status 하나로 유지한다.
       probes:
         enabled: false
+  prometheus:
+    metrics:
+      export:
+        # 스크레이프 엔드포인트는 무인증이라 기본은 끈다. 로컬 compose만 application-local.yml에서 켠다.
+        enabled: false
+
+manyak:
+  internal:
+    shared-secret: ${MANYAK_INTERNAL_SHARED_SECRET:}
+  server:
+    internal-base-url: ${MANYAK_SERVER_INTERNAL_BASE_URL:}
+  push:
+    fcm:
+      service-account-json: ${MANYAK_FCM_SERVICE_ACCOUNT_JSON:}
+    web-base-url: ${MANYAK_PUSH_WEB_BASE_URL:https://manyak.app}
+    web:
+      icon-url: ${MANYAK_PUSH_WEB_ICON_URL:https://manyak.app/icons/icon-192.png}

@@ -1,0 +1,10 @@
+management:
+  endpoints:
+    web:
+      exposure:
+        # 로컬 compose의 Prometheus가 발송 결과 카운터를 긁어 갈 수 있게 health에 더한다.
+        include: health,prometheus
+  prometheus:
+    metrics:
+      export:
+        enabled: true
