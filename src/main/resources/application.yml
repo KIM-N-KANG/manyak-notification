@@ -1,0 +1,18 @@
+spring:
+  application:
+    name: manyak-notification
+
+server:
+  port: 8080
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health
+  endpoint:
+    health:
+      show-details: never
+      # Boot 4의 기본 probe 그룹을 꺼서 응답을 status 하나로 유지한다.
+      probes:
+        enabled: false

@@ -1,0 +1,25 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<configuration>
+    <include resource="org/springframework/boot/logging/logback/defaults.xml"/>
+
+    <!-- 운영과 개발 환경은 JSON 한 줄. jsonlog는 로컬 검증용 프로파일이다.
+         LogstashEncoder가 요청 중 MDC의 상관 식별자를 최상위 필드로 포함한다. -->
+    <springProfile name="prod,dev,jsonlog">
+        <appender name="JSON" class="ch.qos.logback.core.ConsoleAppender">
+            <encoder class="net.logstash.logback.encoder.LogstashEncoder">
+                <customFields>{"service":"manyak-notification"}</customFields>
+            </encoder>
+        </appender>
+        <root level="INFO">
+            <appender-ref ref="JSON"/>
+        </root>
+    </springProfile>
+
+    <!-- 조건을 서로 배타적으로 유지해 로그가 두 번 출력되지 않게 한다. -->
+    <springProfile name="!prod &amp; !dev &amp; !jsonlog">
+        <include resource="org/springframework/boot/logging/logback/console-appender.xml"/>
+        <root level="INFO">
+            <appender-ref ref="CONSOLE"/>
+        </root>
+    </springProfile>
+</configuration>

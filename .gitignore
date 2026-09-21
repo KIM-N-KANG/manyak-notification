@@ -1,0 +1,11 @@
+/.gradle/
+/.kotlin/
+/build/
+.env
+.env.*
+!.env.example
+.idea/
+*.iml
+out/
+.vscode/
+.DS_Store
