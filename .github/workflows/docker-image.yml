@@ -25,6 +25,10 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+        with:
+          # 기본값은 packages:write 토큰을 .git/config에 남긴다. PR 실행은 브랜치가 제어하는
+          # Gradle·Docker 빌드 코드를 돌리므로, 그 코드가 토큰을 주워 GHCR에 쓸 수 있게 된다.
+          persist-credentials: false
 
       - name: Set up Java
         uses: actions/setup-java@v4

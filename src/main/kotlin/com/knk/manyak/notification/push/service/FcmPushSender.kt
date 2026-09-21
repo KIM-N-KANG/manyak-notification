@@ -71,7 +71,7 @@ class FcmPushSender(
             when (deviceToken.platform) {
                 PushPlatform.ANDROID -> builder.setAndroidConfig(
                     AndroidConfig.builder().setPriority(priority)
-                        .apply { ttlMillis?.let { setTtl(it) } }
+                        .apply { ttlMillis?.let { setTtl(it.coerceAtMost(MAX_TTL_MILLIS)) } }
                         .build(),
                 )
                 PushPlatform.WEB -> builder.setWebpushConfig(
@@ -140,6 +140,13 @@ class FcmPushSender(
         /** 모든 시나리오 데이터에 모듈이 덧붙이는 수신 회원 `public_id` 키(스펙 §4-3-5 푸시 발송 모듈). */
         const val KEY_RECIPIENT_ID = "recipientId"
         const val METRIC_PUSH_SEND_RESULT = "manyak.push.send.result"
+
+        /**
+         * FCM이 허용하는 Android TTL 상한인 4주. SDK는 음수만 막고 상한은 검사하지 않아서,
+         * 더 큰 값을 그대로 넘기면 FCM이 INVALID_ARGUMENT로 거절해 발송이 통째로 실패한다.
+         * 보관 기간을 넘겨 못 받는 것과 상한으로 깎여 받는 것 중에는 후자가 낫다.
+         */
+        const val MAX_TTL_MILLIS = 28L * 24 * 60 * 60 * 1000
         const val OUTCOME_SUCCESS = "success"
         const val OUTCOME_UNREGISTERED = "unregistered"
         const val OUTCOME_FAILURE = "failure"

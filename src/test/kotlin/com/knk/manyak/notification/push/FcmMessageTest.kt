@@ -64,6 +64,16 @@ class FcmMessageTest {
     }
 
     @Test
+    fun `4주를 넘는 TTL은 FCM 상한으로 깎는다`() {
+
+        sender.sendToUser(publicId, listOf(PushEligibilityToken("token", PushPlatform.ANDROID)), mapOf("type" to "PROMOTION"), AndroidConfig.Priority.NORMAL, FcmPushSender.MAX_TTL_MILLIS + 1000L)
+
+        val captor = ArgumentCaptor.forClass(Message::class.java)
+        verify(messaging).send(captor.capture())
+        assertThat(fieldOf(fieldOf(captor.value, "androidConfig")!!, "ttl")).isEqualTo("2419200s")
+    }
+
+    @Test
     fun `프로모션의 NORMAL 우선순위는 TTL을 설정하지 않는다`() {
 
         sender.sendToUser(publicId, listOf(PushEligibilityToken("token", PushPlatform.ANDROID)), mapOf("type" to "PROMOTION"), AndroidConfig.Priority.NORMAL)

@@ -16,6 +16,11 @@ management:
       # Boot 4의 기본 probe 그룹을 꺼서 응답을 status 하나로 유지한다.
       probes:
         enabled: false
+  prometheus:
+    metrics:
+      export:
+        # 스크레이프 엔드포인트는 무인증이라 기본은 끈다. 로컬 compose만 application-local.yml에서 켠다.
+        enabled: false
 
 manyak:
   internal:

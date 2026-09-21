@@ -30,6 +30,9 @@ dependencies {
     }
     // Firebase 초기화에 필요하지만 Storage 제외로 전이 의존성에서 빠진다.
     implementation("com.google.http-client:google-http-client-jackson2:2.1.0")
+    // 발송 결과 카운터는 레지스트리가 없으면 메모리에만 쌓이고 사라진다. 로컬 compose의
+    // Prometheus가 /actuator/prometheus를 긁어 가도록 붙인다(운영 OTLP push는 배포 시점에).
+    implementation("io.micrometer:micrometer-registry-prometheus")
     implementation("org.jetbrains.kotlin:kotlin-reflect")
     implementation("tools.jackson.module:jackson-module-kotlin")
     implementation("net.logstash.logback:logstash-logback-encoder:8.0")
