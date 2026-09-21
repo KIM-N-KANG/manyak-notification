@@ -1,0 +1,78 @@
+### 동기 알림 발송 API 검증
+### 준비: 서버 내부 자격 및 토큰 삭제 API, 세 환경변수 설정 후 SERVER_PORT=8081 ./gradlew bootRun.
+### internalSecret은 커밋하지 않는 IntelliJ HTTP 환경 파일에 넣습니다.
+### recipientId는 테스트 전용 회원 publicId입니다. 유효 요청은 실제 기기에 알림을 보냅니다.
+@baseUrl = http://localhost:8081
+@recipientId = 00000000-0000-4000-8000-000000000001
+
+### 헬스체크
+GET {{baseUrl}}/actuator/health
+
+> {%
+    client.test("기동 확인", () => client.assert(response.status === 200, `expected=200 actual=${response.status}`));
+%}
+
+### 만료 요청: 자격 조회와 발송 없이 EXPIRED
+POST {{baseUrl}}/internal/notifications
+X-Manyak-Internal-Secret: {{internalSecret}}
+Content-Type: application/json
+
+{"recipientId":"{{recipientId}}","kind":"SERVICE","type":"STORY_COMPLETED","data":{},"expiresAt":"2000-01-01T00:00:00Z"}
+
+> {%
+    client.test("만료", () => client.assert(response.status === 200 && response.body.outcome === "EXPIRED", `expected=200/EXPIRED actual=${response.status}/${response.body.outcome}`));
+%}
+
+### 시크릿 헤더 누락
+POST {{baseUrl}}/internal/notifications
+Content-Type: application/json
+
+{}
+
+> {%
+    client.test("인증 거절", () => client.assert(response.status === 401, `expected=401 actual=${response.status}`));
+%}
+
+### 필수 필드 누락
+POST {{baseUrl}}/internal/notifications
+X-Manyak-Internal-Secret: {{internalSecret}}
+Content-Type: application/json
+
+{}
+
+> {%
+    client.test("입력 거절", () => client.assert(response.status === 400, `expected=400 actual=${response.status}`));
+%}
+
+### 자유 발송: 회원 자격과 FCM 설정에 따른 결과 및 건수를 확인
+POST {{baseUrl}}/internal/notifications
+X-Manyak-Internal-Secret: {{internalSecret}}
+X-Manyak-Request-Id: req_manual_notification
+X-Manyak-Session-Id: session_manual_notification
+X-Manyak-Device-Id-Hash: hash_manual_notification
+Content-Type: application/json
+
+{
+  "recipientId":"{{recipientId}}",
+  "kind":"SERVICE",
+  "type":"STORY_COMPLETED",
+  "data":{"title":"스토리 완성","body":"테스트 알림","deepLink":"https://manyak.app"}
+}
+
+### 서버 URL을 비우고 알림 서비스를 재시작한 후 별도 실행
+POST {{baseUrl}}/internal/notifications
+X-Manyak-Internal-Secret: {{internalSecret}}
+Content-Type: application/json
+
+{"recipientId":"{{recipientId}}","kind":"SERVICE","type":"STORY_COMPLETED","data":{}}
+
+> {%
+    client.test("자격 조회 실패", () => client.assert(response.status === 502 && response.body.outcome === "FAILED", `expected=502/FAILED actual=${response.status}/${response.body.outcome}`));
+%}
+
+### 시크릿을 비우고 알림 서비스를 재시작한 후 별도 실행
+POST {{baseUrl}}/internal/notifications
+
+> {%
+    client.test("내부 API 비활성", () => client.assert(response.status === 404, `expected=404 actual=${response.status}`));
+%}
