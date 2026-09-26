@@ -76,15 +76,41 @@ jobs:
           push: ${{ github.event_name == 'push' && github.ref == 'refs/heads/dev' }}
           tags: ${{ steps.image-tags.outputs.tags }}
 
+  # GitHub concurrency의 대기 슬롯은 하나다. 늦게 끝난 오래된 빌드가 최신 대기 잡을
+  # 취소한 뒤 내부 게이트에서 스스로 skip하면 최신 커밋이 배포되지 않는다.
+  # concurrency가 없는 사전 잡에서 오래된 실행을 걸러 배포 대기열에 들어가지 않게 한다.
+  check-dev-head:
+    name: Check latest dev SHA before queueing
+    needs: build
+    if: github.event_name == 'push' && github.ref == 'refs/heads/dev'
+    permissions:
+      contents: read
+    runs-on: ubuntu-latest
+    outputs:
+      latest: ${{ steps.head.outputs.latest }}
+    steps:
+      - name: Check latest dev SHA
+        id: head
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          LATEST_SHA=$(gh api "repos/${{ github.repository }}/commits/dev" --jq '.sha')
+          if [ "$LATEST_SHA" = "$GITHUB_SHA" ]; then
+            echo "latest=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "::notice::최신 dev($LATEST_SHA)이 더 있어 stale($GITHUB_SHA) 실행을 배포 대기열에서 제외합니다"
+            echo "latest=false" >> "$GITHUB_OUTPUT"
+          fi
+
   # dev 푸시(GHCR 갱신) 후 → 개발 ECS 서비스에 새 배포를 트리거 + 헬스 스모크 (KNK-829)
   deploy-dev:
     name: Deploy to ECS (dev)
-    needs: build
+    needs: [build, check-dev-head]
     permissions:
       contents: read
       packages: write
       id-token: write
-    if: github.event_name == 'push' && github.ref == 'refs/heads/dev'
+    if: github.event_name == 'push' && github.ref == 'refs/heads/dev' && needs.check-dev-head.outputs.latest == 'true'
     # 같은 레포의 배포를 직렬화한다. cancel-in-progress=false로 이미 ECS에 전달한 배포는
     # GitHub 잡 취소로 되돌릴 수 없으므로 완료를 기다린다.
     concurrency:

@@ -80,7 +80,7 @@ Android는 data-only이며 서비스 알림은 HIGH, 광고 알림은 NORMAL입�
 
 `Docker Image` 워크플로는 dev 대상 PR과 수동 실행에서 테스트·이미지 빌드만 수행하며, 이미지 push와 ECS 배포는 하지 않습니다. dev push에서는 테스트 후 `ghcr.io/kim-n-kang/manyak-notification:<short-sha>`만 게시합니다. 빌드 단계에서 `:dev`를 붙이지 않으며 플랫폼은 `linux/amd64,linux/arm64`입니다.
 
-dev push의 빌드가 성공하면 다음 순서로 자동 배포합니다.
+dev push의 빌드가 성공하면 concurrency가 없는 사전 잡에서 최신 dev SHA인지 확인합니다. 오래된 빌드는 배포 대기열에 들어가지 않아 최신 대기 잡을 밀어내지 않습니다. 통과한 실행은 다음 순서로 자동 배포하며, 대기 중 새 커밋이 생길 수 있어 승격 직전에 SHA를 다시 확인합니다.
 
 1. `vars.AWS_DEV_ROLE_ARN`의 역할을 사용해 OIDC로 AWS에 인증합니다.
 2. `manyak-dev` 서비스의 진행 중인 배포가 안정화될 때까지 기다립니다.
