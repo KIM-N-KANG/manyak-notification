@@ -13,10 +13,9 @@ permissions:
 
 env:
   GHCR_IMAGE: ghcr.io/kim-n-kang/manyak-notification
-
-concurrency:
-  group: notification-image-${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: true
+  AWS_REGION: ap-northeast-2
+  ECS_CLUSTER: manyak-dev
+  ECS_SERVICE: manyak-dev
 
 jobs:
   build:
@@ -61,11 +60,11 @@ jobs:
       - name: Resolve image tags
         id: image-tags
         run: |
+          # :dev 승격은 deploy-dev의 최신 SHA 게이트와 서비스 안정화 대기 뒤에 한다.
           SHORT_SHA="${GITHUB_SHA::7}"
           {
             echo "tags<<EOF"
             echo "${GHCR_IMAGE}:${SHORT_SHA}"
-            echo "${GHCR_IMAGE}:dev"
             echo "EOF"
           } >> "$GITHUB_OUTPUT"
 
@@ -76,3 +75,177 @@ jobs:
           platforms: linux/amd64,linux/arm64
           push: ${{ github.event_name == 'push' && github.ref == 'refs/heads/dev' }}
           tags: ${{ steps.image-tags.outputs.tags }}
+
+  # GitHub concurrency의 대기 슬롯은 하나다. 늦게 끝난 오래된 빌드가 최신 대기 잡을
+  # 취소한 뒤 내부 게이트에서 스스로 skip하면 최신 커밋이 배포되지 않는다.
+  # concurrency가 없는 사전 잡에서 오래된 실행을 걸러 배포 대기열에 들어가지 않게 한다.
+  check-dev-head:
+    name: Check latest dev SHA before queueing
+    needs: build
+    if: github.event_name == 'push' && github.ref == 'refs/heads/dev'
+    permissions:
+      contents: read
+    runs-on: ubuntu-latest
+    outputs:
+      latest: ${{ steps.head.outputs.latest }}
+    steps:
+      - name: Check latest dev SHA
+        id: head
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          LATEST_SHA=$(gh api "repos/${{ github.repository }}/commits/dev" --jq '.sha')
+          if [ "$LATEST_SHA" = "$GITHUB_SHA" ]; then
+            echo "latest=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "::notice::최신 dev($LATEST_SHA)이 더 있어 stale($GITHUB_SHA) 실행을 배포 대기열에서 제외합니다"
+            echo "latest=false" >> "$GITHUB_OUTPUT"
+          fi
+
+  # dev 푸시(GHCR 갱신) 후 → 개발 ECS 서비스에 새 배포를 트리거 + 헬스 스모크 (KNK-829)
+  deploy-dev:
+    name: Deploy to ECS (dev)
+    needs: [build, check-dev-head]
+    permissions:
+      contents: read
+      packages: write
+      id-token: write
+    if: github.event_name == 'push' && github.ref == 'refs/heads/dev' && needs.check-dev-head.outputs.latest == 'true'
+    # 같은 레포의 배포를 직렬화한다. cancel-in-progress=false로 이미 ECS에 전달한 배포는
+    # GitHub 잡 취소로 되돌릴 수 없으므로 완료를 기다린다.
+    concurrency:
+      group: manyak-dev-deploy
+      cancel-in-progress: false
+    runs-on: ubuntu-latest
+    steps:
+      - name: Configure AWS credentials (OIDC)
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ vars.AWS_DEV_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      # server·ai·notification 세 레포가 같은 서비스를 재배포한다.
+      # 최대 10분 걸리는 안정화 대기를 최신 SHA 게이트보다 먼저 끝낸다.
+      # GitHub concurrency는 레포 범위라 이 대기는 경합을 완화할 뿐 완전한 직렬화가 아니다.
+      # 대기 통과 직후 다른 레포가 배포할 수 있으며, 완전한 직렬화에는 외부 락 등이 필요하다.
+      - name: Wait for service to settle
+        run: |
+          for i in $(seq 1 60); do
+            read -r COUNT STATE <<< "$(aws ecs describe-services \
+              --cluster "$ECS_CLUSTER" --services "$ECS_SERVICE" \
+              --query "[length(services[0].deployments), services[0].deployments[?status=='PRIMARY'].rolloutState | [0]]" \
+              --output text)"
+            if [ "$COUNT" = "1" ] && [ "$STATE" = "COMPLETED" ]; then
+              echo "✅ 서비스 안정(배포 1개, PRIMARY COMPLETED) - 배포를 시작합니다"; exit 0
+            fi
+            echo "진행 중인 배포 대기 $i/60 (배포 $COUNT 개, PRIMARY=$STATE) - 10s"; sleep 10
+          done
+          echo "::error::10분 안에 서비스가 안정 상태가 되지 않았습니다 - 진행 중인 배포를 확인하세요"; exit 1
+
+      # 안정화 대기 중 새 dev push가 올 수 있으므로 대기가 끝난 뒤 최신 SHA를 확인한다.
+      # 게이트 직후 승격하도록 긴 대기를 사이에 두지 않아, 대기 중 오래된 실행이 된 경우 건너뛴다.
+      - name: Gate - 최신 dev SHA 확인(stale 배포 방지)
+        id: gate
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          LATEST_SHA=$(gh api "repos/${{ github.repository }}/commits/dev" --jq '.sha')
+          if [ "$LATEST_SHA" != "$GITHUB_SHA" ]; then
+            echo "::notice::최신 dev($LATEST_SHA)이 더 있어 stale($GITHUB_SHA) 배포를 건너뜁니다"
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "skip=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      # 최신 SHA 게이트를 통과한 뒤에만 :dev 를 이 커밋으로 옮긴다. 빌드 잡에서 붙이면
+      # 늦게 끝난 옛 빌드가 태그를 되돌릴 수 있다. manifest 를 복사하므로
+      # 멀티아키(amd64·arm64) 인덱스가 그대로 유지된다.
+      - name: Promote ${{ github.sha }} to :dev
+        if: steps.gate.outputs.skip != 'true'
+        run: |
+          echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u "${{ github.actor }}" --password-stdin
+          docker buildx imagetools create --tag "${GHCR_IMAGE}:dev" "${GHCR_IMAGE}:${GITHUB_SHA::7}"
+          echo "✅ :dev -> ${GITHUB_SHA::7}"
+
+      # 태스크 정의는 이미 GHCR dev 좌표를 들고 있으므로 새 리비전을 등록하지 않는다.
+      # force-new-deployment 가 같은 정의로 태스크를 다시 띄우면서 이미지를 다시 pull 한다.
+      #
+      # 개발은 server·ai·notification이 태스크 정의 하나에 함께 있어, 이 배포는 세 컨테이너를 모두
+      # 현재 GHCR dev 이미지로 갱신한다(notification만 머지해도 server·ai가 함께 바뀐다).
+      - name: Force new ECS deployment
+        if: steps.gate.outputs.skip != 'true'
+        run: |
+          # 이 호출이 만든 배포 id 를 잡아 둔다. services-stable 만으로는 부족하다 -
+          # 서비스에 circuit breaker rollback 이 켜져 있어(compute-ecs), 새 태스크가 못 뜨면 ECS 가
+          # 직전 배포로 되돌리고, 그 상태도 "안정적인 배포 1개 + desired 충족"이라 waiter 가 성공한다.
+          # 그러면 이후 헬스 검사는 옛 태스크를 보게 되어 실패한 배포가 초록으로 끝난다.
+          DEPLOY_ID=$(aws ecs update-service \
+            --cluster "$ECS_CLUSTER" --service "$ECS_SERVICE" \
+            --force-new-deployment --no-cli-pager \
+            --query "service.deployments[?status=='PRIMARY'].id | [0]" --output text)
+          echo "배포 id: $DEPLOY_ID"
+
+          # 그 배포가 COMPLETED 가 될 때까지 폴링한다. 롤백되면 rolloutState 가 FAILED 가 되거나
+          # 배포 자체가 목록에서 사라지므로 둘 다 실패로 처리한다.
+          for i in $(seq 1 60); do
+            STATE=$(aws ecs describe-services --cluster "$ECS_CLUSTER" --services "$ECS_SERVICE" \
+              --query "services[0].deployments[?id=='$DEPLOY_ID'].rolloutState | [0]" --output text)
+            case "$STATE" in
+              COMPLETED) echo "✅ 배포 $DEPLOY_ID COMPLETED"; break ;;
+              FAILED) echo "::error::배포 $DEPLOY_ID 가 FAILED - circuit breaker 롤백 발생. CloudWatch /ecs/manyak-dev 확인"; exit 1 ;;
+              None|"") echo "::error::배포 $DEPLOY_ID 가 사라졌습니다(롤백으로 교체) - CloudWatch /ecs/manyak-dev 확인"; exit 1 ;;
+              *) echo "배포 $STATE - 대기 $i/60 (10s)"; sleep 10 ;;
+            esac
+          done
+          [ "$STATE" = "COMPLETED" ]
+          # 배포 안정화까지 대기. 개발 서비스는 stop-then-start(겹치지 않음)라 그 사이 짧은 중단이 있다.
+
+      # server 가 healthy 여도 ai·notification은 죽어 있을 수 있다 - ai·notification 컨테이너는 essential=false 라
+      # 태스크를 죽이지 않고, ALB 헬스는 server 만 본다. 그래서 컨테이너 단위로 따로 확인한다.
+      - name: Verify container health (server·ai·notification)
+        if: steps.gate.outputs.skip != 'true'
+        run: |
+          TASK=$(aws ecs list-tasks --cluster "$ECS_CLUSTER" --service-name "$ECS_SERVICE" \
+            --query 'taskArns[0]' --output text)
+          aws ecs describe-tasks --cluster "$ECS_CLUSTER" --tasks "$TASK" \
+            --query 'tasks[0].containers[].{name:name,status:lastStatus,health:healthStatus}' --output table
+          # 단발 검사는 안 된다. 배포 완료 시점에도 ai·notification은 아직 UNKNOWN 일 수 있다 -
+          # 태스크 헬스체크에 start period 와 재시도가 있고, ai·notification은 essential=false 라
+          # 배포 완료 판정이 ai·notification의 healthy 를 기다려 주지 않는다. 정상 기동 중인 컨테이너를
+          # 실패로 떨어뜨리지 않도록, 대상이 전부 HEALTHY 가 되거나 종료 상태가 될 때까지 폴링한다.
+          # 문자열 매칭을 쓰지 않는다 - UNHEALTHY 도 "HEALTHY" 로 끝나서 부분일치로는 비정상을
+          # 정상으로 오판한다. JMESPath 로 정확히 비교해 개수를 센다.
+          # 검사 대상은 healthCheck 가 정의된 server·ai·notification으로 한정한다.
+          # 개발 태스크에는 2026-08-22부터 로그 사이드카 log_router(aws-for-fluent-bit)가 있는데
+          # healthCheck 가 없어 healthStatus 가 영원히 UNKNOWN 이다 - 전 컨테이너를 검사하면
+          # 배포·이미지 승격이 성공해도 매 dev push 가 여기서 타임아웃한다(거짓 실패).
+          # 개발 서비스는 desiredCount 1(stop-then-start)이라 tasks[0] 한 개면 충분하다.
+          for i in $(seq 1 20); do
+            aws ecs describe-tasks --cluster "$ECS_CLUSTER" --tasks "$TASK" \
+              --query 'tasks[0].containers[].{name:name,status:lastStatus,health:healthStatus}' --output table
+            # 대상 컨테이너가 실제로 있는지 먼저 본다. 개수만 세면 이름이 바뀌거나 컨테이너가 빠졌을 때
+            # "대기 중 0개"로 통과해 버린다(검증하지 않는 검증).
+            read -r SERVER_COUNT AI_COUNT NOTIFICATION_COUNT <<< "$(aws ecs describe-tasks \
+              --cluster "$ECS_CLUSTER" --tasks "$TASK" \
+              --query "[length(tasks[0].containers[?name=='server']), length(tasks[0].containers[?name=='ai']), length(tasks[0].containers[?name=='notification'])]" \
+              --output text)"
+            if [ "$SERVER_COUNT" != "1" ] || [ "$AI_COUNT" != "1" ] || [ "$NOTIFICATION_COUNT" != "1" ]; then
+              echo "::error::server=$SERVER_COUNT ai=$AI_COUNT notification=$NOTIFICATION_COUNT 입니다 - 컨테이너 누락 또는 이름 변경. 태스크 정의 확인"
+              exit 1
+            fi
+            # 다른 레포가 재배포하면 종료된 컨테이너에 마지막 HEALTHY가 남을 수 있다.
+            # 종료·비정상 여부를 먼저 검사하고, 성공도 RUNNING과 HEALTHY를 모두 요구한다.
+            BAD=$(aws ecs describe-tasks --cluster "$ECS_CLUSTER" --tasks "$TASK" \
+              --query "length(tasks[0].containers[?(name=='server' || name=='ai' || name=='notification') && (healthStatus=='UNHEALTHY' || lastStatus=='STOPPED')])" --output text)
+            if [ "$BAD" != "0" ]; then
+              echo "::error::UNHEALTHY 또는 STOPPED 컨테이너가 있습니다 - CloudWatch /ecs/manyak-dev 로그 확인"
+              exit 1
+            fi
+            PENDING=$(aws ecs describe-tasks --cluster "$ECS_CLUSTER" --tasks "$TASK" \
+              --query "length(tasks[0].containers[?(name=='server' || name=='ai' || name=='notification') && (healthStatus!='HEALTHY' || lastStatus!='RUNNING')])" --output text)
+            if [ "$PENDING" = "0" ]; then
+              echo "✅ server·ai·notification 전부 RUNNING·HEALTHY"; exit 0
+            fi
+            echo "컨테이너 기동 대기 $i/20 (15s)..."; sleep 15
+          done
+          echo "::error::제한 시간 안에 server·ai·notification이 전부 RUNNING·HEALTHY 가 되지 않았습니다 - CloudWatch /ecs/manyak-dev 로그 확인"; exit 1
