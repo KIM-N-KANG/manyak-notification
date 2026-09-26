@@ -1,8 +1,8 @@
 spring:
   data:
     redis:
-      connect-timeout: 3s
-      timeout: 5s
+      connect-timeout: 1s
+      timeout: 1s
   application:
     name: manyak-notification
 

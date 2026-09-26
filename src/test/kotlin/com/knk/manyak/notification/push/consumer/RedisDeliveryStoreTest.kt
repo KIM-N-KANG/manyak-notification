@@ -26,13 +26,13 @@ class RedisDeliveryStoreTest {
     }
     @AfterEach fun close() { factory.destroy() }
 
-    @Test fun `동시 SET NX는 한 소비자만 선점하고 15분 TTL을 둔다`() {
+    @Test fun `동시 SET NX는 한 소비자만 선점하고 2분 TTL을 둔다`() {
         Executors.newFixedThreadPool(8).use { pool ->
             val results = (1..20).map { pool.submit<Claim> { store.claim("id", "$it") } }.map { it.get() }
             assertThat(results.count { it == Claim.ACQUIRED }).isEqualTo(1)
             assertThat(results.count { it == Claim.BUSY }).isEqualTo(19)
         }
-        assertThat(template.getExpire(RedisDeliveryStore.processedKey("id"))).isBetween(895, 900)
+        assertThat(template.getExpire(RedisDeliveryStore.processedKey("id"))).isBetween(115, 120)
     }
 
     @Test fun `완료와 토큰 해시는 7일 보존하고 원본 토큰은 저장하지 않는다`() {

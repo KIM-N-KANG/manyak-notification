@@ -14,6 +14,7 @@ class NotificationConsumer(
     private val service: NotificationService,
     private val store: DeliveryStore,
     private val registry: MeterRegistry,
+    private val timing: ConsumerTimingProperties = ConsumerTimingProperties(),
 ) {
     private val log = LoggerFactory.getLogger(javaClass)
 
@@ -26,7 +27,7 @@ class NotificationConsumer(
                 Claim.BUSY -> ConsumeResult.RETRY
                 Claim.ACQUIRED -> {
                     acquired = true
-                    val deadline = System.nanoTime() + Duration.ofMinutes(5).toNanos()
+                    val deadline = System.nanoTime() + Duration.ofMillis(timing.processingBudgetMs).toNanos()
                     val response = service.send(
                         message.request(),
                         alreadySent = { store.wasSent(message.messageId, it) },

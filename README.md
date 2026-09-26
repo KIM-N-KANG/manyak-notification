@@ -16,7 +16,7 @@ Firebase 서비스 계정은 앱과 웹이 사용하는 Firebase 프로젝트에
 
 ## 로컬 실행
 
-Java 21을 설치하고 위 세 환경변수를 주입합니다. 서버는 `DELETE /internal/push-tokens`를 지원하는 버전이어야 합니다. 연결은 3초, 읽기는 5초에 타임아웃됩니다.
+Java 21을 설치하고 위 세 환경변수를 주입합니다. 서버는 `DELETE /internal/push-tokens`를 지원하는 버전이어야 합니다. 연결은 1초, 읽기는 2초에 타임아웃됩니다.
 
 ```sh
 export MANYAK_SERVER_INTERNAL_BASE_URL=http://localhost:8080
@@ -110,9 +110,15 @@ docker run --rm --name manyak-notification -p 8081:8080 \
 
 `messageId`, UUID `recipientId`, `kind`, `type`, 문자열 맵 `data`, `requestId`, `sessionId`, `schemaVersion: 1`이 필수이고 `expiresAt`은 선택입니다. `data.type`은 최상위 `type`과 일치해야 합니다. `STORY_COMPLETED`는 SERVICE, `ATTENDANCE_REMINDER`와 `PROMOTION`은 MARKETING입니다. 메시지에 동의나 토큰을 저장하지 않고 매 처리마다 서버 자격을 재조회합니다.
 
-완료·폐기는 `notification:processed:{messageId}`에 7일 기록합니다. 처리 중 키는 SET NX와 15분 TTL로 선점하고 RETRY 때 해제합니다. 5분이 지나면 새 기기 발송을 시작하지 않습니다. 성공 기기의 SHA-256 토큰 해시는 `notification:sent:{messageId}`에 7일 보존하여 재전달 때 제외합니다. Redis 기록 실패 시 재시도하며, FCM 성공과 Redis 기록 사이 장애는 중복 발송 가능성이 있습니다.
+완료·폐기는 `notification:processed:{messageId}`에 7일 기록합니다. 처리 중 키는 SET NX와 기본 2분 TTL로 선점하고 RETRY 때 해제합니다. 기본 10초의 처리 예산이 지나면 새 기기 발송을 시작하지 않고 다음 전달에서 이어갑니다. 성공 기기의 SHA-256 토큰 해시는 `notification:sent:{messageId}`에 7일 보존하여 재전달 때 제외합니다. Redis 기록 실패 시 재시도하며, FCM 성공과 Redis 기록 사이 장애는 중복 발송 가능성이 있습니다.
 
 RETRY는 `push.requested.retry`에서 고정 60초 간격으로 최초 포함 총 5회 처리한 뒤 `push.requested.dlq`로 보냅니다. `MANYAK_PUSH_CONSUMER_RETRY_DELAY_MS`(기본 60000)와 `MANYAK_PUSH_CONSUMER_RETRY_ATTEMPTS`(기본 5)로 조정합니다. JSON·스키마 오류는 바로 DLQ로 보냅니다. SUCCESS/DISCARD는 처리 후, RETRY/DLQ는 재발행 확인 후 오프셋을 커밋합니다. 자동 커밋은 사용하지 않습니다.
+
+`MANYAK_PUSH_CONSUMER_PROCESSING_TTL_MS`(기본 120000)는 `(retry-attempts - 1) × retry-delay-ms`보다 반드시 짧아야 합니다. `MANYAK_PUSH_CONSUMER_PROCESSING_BUDGET_MS`(기본 10000)는 양수이고 TTL보다 짧아야 합니다. 시도 횟수가 2 미만이거나 간격이 양수가 아니거나 이 조건을 위반하면 기동에 실패합니다. 재시도 간격을 축소한 테스트에서는 TTL과 처리 예산도 함께 축소해야 합니다. 예를 들어 FCM/API를 mock한 자동 테스트는 간격 1000ms, TTL 2500ms, 예산 100ms를 사용합니다. 실제 FCM 환경에서는 아래 네트워크 예산도 고려해야 합니다.
+
+SDK 내부 재시도는 0회(실제 대기 0초, RetryConfig의 최소 대기 상한 500ms), FCM connect/read/write는 각각 1초입니다. OAuth 자격 갱신의 내부 재시도도 끕니다. 기본 처리 예산의 보수적 합은 `10 + 3 + 2×40 + 3 + 4×2 = 104초`로 2분 선점보다 짧습니다(새 기기 시작 예산, 마지막 FCM 요청, OAuth connect/read 갱신 최대 두 번, 서버 정리, Redis 작업). 시간 설정의 근거는 `ConsumerTimingProperties` KDoc에 있습니다. SDK 9.10.0의 package-private builder를 작은 연결 클래스에서 사용하므로 SDK 교체 시 실제 SDK 재시도 테스트를 확인해야 합니다.
+
+처리 중 소비자가 죽으면 선점 만료 후 남은 재시도에서 새 소비자가 처리합니다. 선점은 자동 연장하지 않습니다. JVM 정지 등으로 처리 시간이 TTL을 넘으면 **유실보다 중복을 허용**하며, 이전 소유자의 완료/삭제는 소유자 비교로 차단합니다.
 
 FCM 비활성은 `FCM_DISABLED`로 DISCARD합니다. 소비 메트릭 `manyak.push.consume.result{outcome=success|retry|discard|dlq}`도 기동 시 0으로 등록합니다. 메시지의 requestId/sessionId는 MDC와 자격 조회 헤더로 전달하고 처리 후 기존 MDC를 복구합니다.
 

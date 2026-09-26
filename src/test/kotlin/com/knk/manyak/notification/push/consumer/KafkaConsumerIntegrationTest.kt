@@ -18,6 +18,7 @@ import org.mockito.Mockito.*
 import org.springframework.beans.factory.annotation.Autowired
 import org.springframework.boot.test.context.SpringBootTest
 import org.springframework.kafka.core.KafkaTemplate
+import org.springframework.data.redis.core.StringRedisTemplate
 import org.springframework.test.context.ActiveProfiles
 import org.springframework.test.context.DynamicPropertyRegistry
 import org.springframework.test.context.DynamicPropertySource
@@ -46,6 +47,8 @@ class KafkaConsumerIntegrationTest {
             registry.add("spring.data.redis.host") { redis.host }
             registry.add("spring.data.redis.port") { redis.getMappedPort(6379) }
             registry.add("manyak.push.consumer.retry-delay-ms") { "1000" }
+            registry.add("manyak.push.consumer.processing-ttl-ms") { "2500" }
+            registry.add("manyak.push.consumer.processing-budget-ms") { "100" }
         }
     }
     @MockitoBean lateinit var client: PushEligibilityClient
@@ -53,6 +56,8 @@ class KafkaConsumerIntegrationTest {
     @Autowired lateinit var template: KafkaTemplate<String, ByteArray>
     @Autowired lateinit var mapper: ObjectMapper
     @Autowired lateinit var meters: MeterRegistry
+    @Autowired lateinit var deliveryStore: RedisDeliveryStore
+    @Autowired lateinit var redisTemplate: StringRedisTemplate
 
     @Test fun `중복 거절 재시도 비차단과 5회 뒤 DLQ 및 잘못된 JSON을 검증한다`() {
         val attempts = ConcurrentHashMap<UUID, AtomicInteger>()
@@ -96,6 +101,27 @@ class KafkaConsumerIntegrationTest {
             }
         }
     }
+    @Test fun `소비자가 선점 직후 죽어도 만료 뒤 재시도에서 DLQ 전에 완료한다`() {
+        val message = message()
+        `when`(client.getEligibility(anyValue(), anyValue(), anyValue())).thenReturn(
+            PushEligibilityResponse(true, "OK", listOf(PushEligibilityToken("recovered", PushPlatform.ANDROID))))
+        val retriesBefore = meters.get(NotificationConsumer.METRIC).tag("outcome", "retry").counter().count()
+        val dlqBefore = meters.get(NotificationConsumer.METRIC).tag("outcome", "dlq").counter().count()
+        // 선점만 남긴 채 죽은 소비자: release/complete는 호출하지 않는다.
+        assertThat(deliveryStore.claim(message.messageId, "dead-worker")).isEqualTo(Claim.ACQUIRED)
+        publish(message)
+        await().atMost(Duration.ofSeconds(2)).untilAsserted {
+            assertThat(meters.get(NotificationConsumer.METRIC).tag("outcome", "retry").counter().count()).isGreaterThan(retriesBefore)
+        }
+        verifyNoInteractions(messaging, client)
+        await().atMost(Duration.ofSeconds(8)).untilAsserted {
+            assertThat(redisTemplate.opsForValue().get(RedisDeliveryStore.processedKey(message.messageId))).isEqualTo("done")
+        }
+        verify(messaging, times(1)).send(any(Message::class.java))
+        assertThat(meters.get(NotificationConsumer.METRIC).tag("outcome", "retry").counter().count() - retriesBefore).isBetween(1.0, 4.0)
+        assertThat(meters.get(NotificationConsumer.METRIC).tag("outcome", "dlq").counter().count()).isEqualTo(dlqBefore)
+    }
+
     private fun message() = PushMessage(UUID.randomUUID().toString(), UUID.randomUUID(), PushKind.SERVICE, "STORY_COMPLETED", mapOf("type" to "STORY_COMPLETED"), null, "request", "session", 1)
     private fun publish(message: PushMessage) { template.send("push.requested", message.recipientId.toString(), mapper.writeValueAsBytes(message)).get() }
 }

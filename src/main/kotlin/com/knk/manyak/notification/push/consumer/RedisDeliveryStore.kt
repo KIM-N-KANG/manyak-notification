@@ -7,9 +7,12 @@ import java.security.MessageDigest
 import java.time.Duration
 
 @Component
-class RedisDeliveryStore(private val redis: StringRedisTemplate) : DeliveryStore {
+class RedisDeliveryStore(
+    private val redis: StringRedisTemplate,
+    private val timing: ConsumerTimingProperties = ConsumerTimingProperties(),
+) : DeliveryStore {
     override fun claim(messageId: String, owner: String): Claim {
-        if (redis.opsForValue().setIfAbsent(processedKey(messageId), owner, PROCESSING_TTL) == true) return Claim.ACQUIRED
+        if (redis.opsForValue().setIfAbsent(processedKey(messageId), owner, Duration.ofMillis(timing.processingTtlMs)) == true) return Claim.ACQUIRED
         return if (redis.opsForValue().get(processedKey(messageId)) == DONE) Claim.DONE else Claim.BUSY
     }
 
@@ -33,8 +36,6 @@ class RedisDeliveryStore(private val redis: StringRedisTemplate) : DeliveryStore
     }
 
     companion object {
-        // 5분간 새 기기를 시작하며, 마지막 SDK 호출의 재시도·타임아웃을 포함해 15분 안에 끝낸다.
-        val PROCESSING_TTL: Duration = Duration.ofMinutes(15)
         val HISTORY_TTL: Duration = Duration.ofDays(7)
         const val DONE = "done"
         fun processedKey(id: String) = "notification:processed:$id"
