@@ -11,8 +11,8 @@ class PushClientConfig {
     @Bean
     fun serverRestClientBuilder(): RestClient.Builder = RestClient.builder().requestFactory(
         SimpleClientHttpRequestFactory().apply {
-            setConnectTimeout(Duration.ofSeconds(3))
-            setReadTimeout(Duration.ofSeconds(5))
+            setConnectTimeout(Duration.ofSeconds(1))
+            setReadTimeout(Duration.ofSeconds(2))
         },
     )
 }

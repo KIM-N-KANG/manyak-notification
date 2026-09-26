@@ -15,7 +15,12 @@ import java.time.Instant
 class NotificationService(private val client: PushEligibilityClient, private val sender: FcmPushSender) {
     private val log = LoggerFactory.getLogger(javaClass)
 
-    fun send(request: NotificationRequest): NotificationResponse {
+    fun send(
+        request: NotificationRequest,
+        alreadySent: (String) -> Boolean = { false },
+        onSent: (String) -> Unit = {},
+        beforeSend: () -> Unit = {},
+    ): NotificationResponse {
         val now = Instant.now()
         if (request.expiresAt?.let { !it.isAfter(now) } == true) {
             return NotificationResponse(NotificationOutcome.EXPIRED, "EXPIRED")
@@ -36,6 +41,8 @@ class NotificationService(private val client: PushEligibilityClient, private val
             request.recipientId, eligibility.tokens, request.data + ("type" to request.type),
             priority = if (request.kind == PushKind.MARKETING) AndroidConfig.Priority.NORMAL else AndroidConfig.Priority.HIGH,
             ttlMillis = request.expiresAt?.let { Duration.between(sendAt, it).toMillis() },
+            alreadySent = alreadySent, onSent = onSent, beforeSend = beforeSend,
+            expiresAt = request.expiresAt,
         )
     }
 }

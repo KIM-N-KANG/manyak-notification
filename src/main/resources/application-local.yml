@@ -1,4 +1,7 @@
 management:
+  health:
+    redis:
+      enabled: true
   endpoints:
     web:
       exposure:

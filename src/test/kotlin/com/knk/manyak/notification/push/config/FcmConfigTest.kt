@@ -1,6 +1,8 @@
 package com.knk.manyak.notification.push.config
 
 import com.google.firebase.FirebaseApp
+import com.google.firebase.ImplFirebaseTrampolines
+import com.google.auth.oauth2.ServiceAccountCredentials
 import org.assertj.core.api.Assertions.assertThat
 import org.junit.jupiter.api.AfterEach
 import org.junit.jupiter.api.Test
@@ -34,6 +36,11 @@ class FcmConfigTest {
 
         assertThat(messaging).isNotNull
         assertThat(FirebaseApp.getApps()).hasSize(1)
+        val options = FirebaseApp.getInstance().options
+        assertThat(options.connectTimeout).isEqualTo(1_000)
+        assertThat(options.readTimeout).isEqualTo(1_000)
+        assertThat(options.writeTimeout).isEqualTo(1_000)
+        assertThat((ImplFirebaseTrampolines.getCredentials(FirebaseApp.getInstance()) as ServiceAccountCredentials).toBuilder().isDefaultRetriesEnabled).isFalse()
     }
 
     @Test
