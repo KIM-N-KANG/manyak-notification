@@ -207,17 +207,19 @@ jobs:
               echo "::error::server=$SERVER_COUNT ai=$AI_COUNT notification=$NOTIFICATION_COUNT 입니다 - 컨테이너 누락 또는 이름 변경. 태스크 정의 확인"
               exit 1
             fi
-            PENDING=$(aws ecs describe-tasks --cluster "$ECS_CLUSTER" --tasks "$TASK" \
-              --query "length(tasks[0].containers[?(name=='server' || name=='ai' || name=='notification') && healthStatus!='HEALTHY'])" --output text)
-            if [ "$PENDING" = "0" ]; then
-              echo "✅ server·ai·notification 전부 HEALTHY"; exit 0
-            fi
+            # 다른 레포가 재배포하면 종료된 컨테이너에 마지막 HEALTHY가 남을 수 있다.
+            # 종료·비정상 여부를 먼저 검사하고, 성공도 RUNNING과 HEALTHY를 모두 요구한다.
             BAD=$(aws ecs describe-tasks --cluster "$ECS_CLUSTER" --tasks "$TASK" \
               --query "length(tasks[0].containers[?(name=='server' || name=='ai' || name=='notification') && (healthStatus=='UNHEALTHY' || lastStatus=='STOPPED')])" --output text)
             if [ "$BAD" != "0" ]; then
               echo "::error::UNHEALTHY 또는 STOPPED 컨테이너가 있습니다 - CloudWatch /ecs/manyak-dev 로그 확인"
               exit 1
             fi
+            PENDING=$(aws ecs describe-tasks --cluster "$ECS_CLUSTER" --tasks "$TASK" \
+              --query "length(tasks[0].containers[?(name=='server' || name=='ai' || name=='notification') && (healthStatus!='HEALTHY' || lastStatus!='RUNNING')])" --output text)
+            if [ "$PENDING" = "0" ]; then
+              echo "✅ server·ai·notification 전부 RUNNING·HEALTHY"; exit 0
+            fi
             echo "컨테이너 기동 대기 $i/20 (15s)..."; sleep 15
           done
-          echo "::error::제한 시간 안에 server·ai·notification이 전부 HEALTHY 가 되지 않았습니다 - CloudWatch /ecs/manyak-dev 로그 확인"; exit 1
+          echo "::error::제한 시간 안에 server·ai·notification이 전부 RUNNING·HEALTHY 가 되지 않았습니다 - CloudWatch /ecs/manyak-dev 로그 확인"; exit 1
