@@ -1,4 +1,9 @@
 spring:
+  cloud:
+    aws:
+      sqs:
+        # local과 기본 테스트에서는 AWS 클라이언트와 폴링 컨테이너를 생성하지 않는다.
+        enabled: false
   data:
     redis:
       connect-timeout: 1s
@@ -35,8 +40,23 @@ manyak:
   server:
     internal-base-url: ${MANYAK_SERVER_INTERNAL_BASE_URL:}
   push:
+    queue-url: ${MANYAK_PUSH_QUEUE_URL:}
     fcm:
       service-account-json: ${MANYAK_FCM_SERVICE_ACCOUNT_JSON:}
     web-base-url: ${MANYAK_PUSH_WEB_BASE_URL:https://manyak.app}
     web:
       icon-url: ${MANYAK_PUSH_WEB_ICON_URL:https://manyak.app/icons/icon-192.png}
+
+---
+spring:
+  config:
+    activate:
+      on-profile: dev | prod
+  cloud:
+    aws:
+      # dev/prod 큐는 서울 리전에 있다. 자격증명은 SDK 기본 체인으로 ECS 태스크 역할을 사용한다.
+      region:
+        static: ap-northeast-2
+      sqs:
+        enabled: true
+        queue-not-found-strategy: FAIL
