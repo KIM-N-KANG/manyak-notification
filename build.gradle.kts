@@ -23,6 +23,8 @@ dependencies {
     implementation("org.springframework.boot:spring-boot-starter-web")
     implementation("org.springframework.boot:spring-boot-starter-actuator")
     implementation("org.springframework.boot:spring-boot-starter-validation")
+    implementation("org.springframework.boot:spring-boot-starter-data-redis")
+    implementation("org.springframework.kafka:spring-kafka")
     implementation("com.google.firebase:firebase-admin:9.10.0") {
         // FCM만 사용하므로 Firestore와 Storage의 대용량 전이 의존성을 제외한다.
         exclude(group = "com.google.cloud", module = "google-cloud-firestore")
@@ -37,6 +39,8 @@ dependencies {
     implementation("tools.jackson.module:jackson-module-kotlin")
     implementation("net.logstash.logback:logstash-logback-encoder:8.0")
     testImplementation("org.springframework.boot:spring-boot-starter-test")
+    testImplementation("org.testcontainers:testcontainers-junit-jupiter")
+    testImplementation("org.testcontainers:testcontainers-kafka")
     testRuntimeOnly("org.junit.platform:junit-platform-launcher")
 }
 

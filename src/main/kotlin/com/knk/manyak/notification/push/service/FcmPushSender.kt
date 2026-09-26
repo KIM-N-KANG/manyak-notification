@@ -18,6 +18,8 @@ import io.micrometer.core.instrument.MeterRegistry
 import org.slf4j.LoggerFactory
 import org.springframework.beans.factory.annotation.Value
 import org.springframework.stereotype.Component
+import java.time.Duration
+import java.time.Instant
 import java.util.UUID
 
 @Component
@@ -38,23 +40,39 @@ class FcmPushSender(
         data: Map<String, String>,
         priority: AndroidConfig.Priority = AndroidConfig.Priority.HIGH,
         ttlMillis: Long? = null,
+        alreadySent: (String) -> Boolean = { false },
+        onSent: (String) -> Unit = {},
+        beforeSend: () -> Unit = {},
+        expiresAt: Instant? = null,
     ): NotificationResponse {
         val messaging = this.messaging ?: return NotificationResponse(NotificationOutcome.SKIPPED, "FCM_DISABLED")
         if (tokens.isEmpty()) return NotificationResponse(NotificationOutcome.SKIPPED, "NO_TOKENS")
         // 기기 공유나 지연 수신 때 앱이 다른 회원의 알림을 거르도록 호출자 값보다 우선한다.
         val payload = data + (KEY_RECIPIENT_ID to recipientId.toString())
-        val outcomes = tokens.map { sendTo(messaging, recipientId, it, payload, priority, ttlMillis) }
+        val outcomes = tokens.distinctBy { it.token }.map {
+            beforeSend()
+            if (alreadySent(it.token)) OUTCOME_SUCCESS
+            else {
+                val remaining = expiresAt?.let { end -> Duration.between(Instant.now(), end).toMillis() }
+                if (remaining != null && remaining <= 0) OUTCOME_FAILURE
+                else sendTo(messaging, recipientId, it, payload, priority, remaining ?: ttlMillis).also { result ->
+                    // SDK 예외 처리 밖에서 기록한다. 저장 실패를 영구 발송 실패로 삼키면 안 된다.
+                    if (result == OUTCOME_SUCCESS) onSent(it.token)
+                }
+            }
+        }
         val sent = outcomes.count { it == OUTCOME_SUCCESS }
         val unregistered = outcomes.count { it == OUTCOME_UNREGISTERED }
-        val failed = outcomes.count { it == OUTCOME_FAILURE }
+        val failed = outcomes.count { it == OUTCOME_FAILURE || it == OUTCOME_RETRY }
         return NotificationResponse(
             outcome = if (sent > 0) NotificationOutcome.SENT else NotificationOutcome.FAILED,
             reason = when {
-                sent == tokens.size -> "OK"
+                sent == outcomes.size -> "OK"
                 sent > 0 -> "PARTIAL_FAILURE"
                 else -> "NO_DELIVERIES"
             },
             sent = sent, unregistered = unregistered, failed = failed,
+            retryable = outcomes.count { it == OUTCOME_RETRY },
         )
     }
 
@@ -116,7 +134,10 @@ class FcmPushSender(
                     "FCM 발송에 실패했습니다. (recipientId={}, token={}, code={}, error={})",
                     recipientId, mask(deviceToken.token), ex.messagingErrorCode, ex.javaClass.simpleName,
                 )
-                return OUTCOME_FAILURE
+                val status = ex.httpResponse?.statusCode
+                return if (ex.messagingErrorCode == MessagingErrorCode.INVALID_ARGUMENT || status in listOf(400, 401, 403, 404) ||
+                    ex.messagingErrorCode in listOf(MessagingErrorCode.SENDER_ID_MISMATCH, MessagingErrorCode.THIRD_PARTY_AUTH_ERROR)) OUTCOME_FAILURE
+                else OUTCOME_RETRY
             }
         } catch (ex: RuntimeException) {
             // SDK 내부 오류·잘못된 메시지 조립 등. 한 기기 실패가 다른 기기 발송을 막지 않는다.
@@ -125,7 +146,7 @@ class FcmPushSender(
                 "FCM 발송 중 예외가 났습니다. (recipientId={}, token={}, error={})",
                 recipientId, mask(deviceToken.token), ex.javaClass.simpleName,
             )
-            return OUTCOME_FAILURE
+            return if (ex is IllegalArgumentException) OUTCOME_FAILURE else OUTCOME_RETRY
         }
     }
 
@@ -150,6 +171,7 @@ class FcmPushSender(
         const val OUTCOME_SUCCESS = "success"
         const val OUTCOME_UNREGISTERED = "unregistered"
         const val OUTCOME_FAILURE = "failure"
+        private const val OUTCOME_RETRY = "retry"
         val OUTCOMES = listOf(OUTCOME_SUCCESS, OUTCOME_UNREGISTERED, OUTCOME_FAILURE)
         private const val TOKEN_LOG_PREFIX = 12
     }

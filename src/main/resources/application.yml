@@ -1,4 +1,8 @@
 spring:
+  data:
+    redis:
+      connect-timeout: 3s
+      timeout: 5s
   application:
     name: manyak-notification
 
@@ -6,6 +10,9 @@ server:
   port: 8080
 
 management:
+  health:
+    redis:
+      enabled: false
   endpoints:
     web:
       exposure:

@@ -1,6 +1,6 @@
 # manyak-notification
 
-manyak-server에서 발송 자격을 확인한 뒤 FCM으로 동기 발송하는 알림 서비스입니다. 회원과 토큰은 서버가 관리하며 이 서비스에는 DB와 큐가 없습니다. Kotlin 2.2.21, Spring Boot 4.0.6, Java 21을 사용합니다.
+manyak-server에서 발송 자격을 확인한 뒤 FCM으로 발송하는 알림 서비스입니다. 회원과 토큰은 서버가 관리합니다. 로컬에서는 Kafka를 소비하고 Redis에 멱등 이력을 저장하며, 기존 동기 API도 유지합니다. PostgreSQL은 사용하지 않습니다. Kotlin 2.2.21, Spring Boot 4.0.6, Java 21을 사용합니다.
 
 ## 설정
 
@@ -72,7 +72,7 @@ Android는 data-only이며 서비스 알림은 HIGH, 광고 알림은 NORMAL입�
 | `FAILED` / `NO_DELIVERIES` | FCM 성공 0건 | 200 |
 | `FAILED` / `ELIGIBILITY_UNAVAILABLE` | 자격 조회 실패, 발송 없음 | 502 |
 
-`UNREGISTERED`는 서버 삭제 API로 정리하며 삭제까지 성공하면 `unregistered`에 셉니다. 삭제 실패는 기존 서버 메트릭 관례대로 `failed`에 세고 다음 기기에 계속 보냅니다. `INVALID_ARGUMENT`는 페이로드 오류일 수 있어 삭제하지 않습니다. 명시적 재시도는 없습니다.
+`UNREGISTERED`는 서버 삭제 API로 정리하며 삭제까지 성공하면 `unregistered`에 셉니다. 삭제 실패는 기존 서버 메트릭 관례대로 `failed`에 세고 다음 기기에 계속 보냅니다. `INVALID_ARGUMENT`는 페이로드 오류일 수 있어 삭제하지 않습니다. 동기 API는 애플리케이션 재시도를 하지 않습니다. 큐 소비는 아래 재전달 정책을 따릅니다.
 
 수동 요청 모음은 [http/notifications.http](http/notifications.http)에 있습니다.
 
@@ -103,3 +103,19 @@ docker run --rm --name manyak-notification -p 8081:8080 \
 기본 로컬 로그는 사람이 읽는 형식이고 `dev`, `prod`, `jsonlog` 프로파일에서는 JSON 한 줄입니다. 요청 처리 로그에 MDC 상관 식별자를 포함합니다. 기본 INFO에서는 헬스체크 요청 로그를 남기지 않습니다. 상관 헤더 확인은 `LOGGING_LEVEL_COM_KNK_MANYAK_NOTIFICATION_GLOBAL_OBSERVABILITY=DEBUG`로 실행합니다.
 
 메트릭 `manyak.push.send.result{outcome=success|unregistered|failure}`를 기동 시 0으로 사전 등록합니다.
+
+## Kafka 소비(local 전용)
+
+`SPRING_PROFILES_ACTIVE=local`에서 `push.requested`를 그룹 `notification`으로 소비합니다. `SPRING_KAFKA_BOOTSTRAP_SERVERS` 기본값은 `localhost:9092`, Redis는 `SPRING_DATA_REDIS_HOST`/`SPRING_DATA_REDIS_PORT`로 설정합니다. compose는 각각 `kafka:19092`, `redis:6379`를 주입합니다. 토픽 세 개는 infra의 `kafka-init`이 생성해야 하며 자동 생성하지 않습니다.
+
+`messageId`, UUID `recipientId`, `kind`, `type`, 문자열 맵 `data`, `requestId`, `sessionId`, `schemaVersion: 1`이 필수이고 `expiresAt`은 선택입니다. `data.type`은 최상위 `type`과 일치해야 합니다. `STORY_COMPLETED`는 SERVICE, `ATTENDANCE_REMINDER`와 `PROMOTION`은 MARKETING입니다. 메시지에 동의나 토큰을 저장하지 않고 매 처리마다 서버 자격을 재조회합니다.
+
+완료·폐기는 `notification:processed:{messageId}`에 7일 기록합니다. 처리 중 키는 SET NX와 15분 TTL로 선점하고 RETRY 때 해제합니다. 5분이 지나면 새 기기 발송을 시작하지 않습니다. 성공 기기의 SHA-256 토큰 해시는 `notification:sent:{messageId}`에 7일 보존하여 재전달 때 제외합니다. Redis 기록 실패 시 재시도하며, FCM 성공과 Redis 기록 사이 장애는 중복 발송 가능성이 있습니다.
+
+RETRY는 `push.requested.retry`에서 고정 60초 간격으로 최초 포함 총 5회 처리한 뒤 `push.requested.dlq`로 보냅니다. `MANYAK_PUSH_CONSUMER_RETRY_DELAY_MS`(기본 60000)와 `MANYAK_PUSH_CONSUMER_RETRY_ATTEMPTS`(기본 5)로 조정합니다. JSON·스키마 오류는 바로 DLQ로 보냅니다. SUCCESS/DISCARD는 처리 후, RETRY/DLQ는 재발행 확인 후 오프셋을 커밋합니다. 자동 커밋은 사용하지 않습니다.
+
+FCM 비활성은 `FCM_DISABLED`로 DISCARD합니다. 소비 메트릭 `manyak.push.consume.result{outcome=success|retry|discard|dlq}`도 기동 시 0으로 등록합니다. 메시지의 requestId/sessionId는 MDC와 자격 조회 헤더로 전달하고 처리 후 기존 MDC를 복구합니다.
+
+Kafka는 `spring-kafka`로 직접 구성하며 dev/prod에는 클라이언트·리스너를 만들지 않습니다. Redis health는 소비가 있는 local에서만 켭니다. dev/prod의 SQS 어댑터는 후속 작업입니다.
+
+테스트는 Docker에서 별도 Redis/Kafka Testcontainers를 띄웁니다. 기존 compose 컨테이너를 사용하지 않습니다.

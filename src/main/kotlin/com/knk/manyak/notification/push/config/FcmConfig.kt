@@ -24,6 +24,9 @@ class FcmConfig {
         }
         val options = FirebaseOptions.builder()
             .setCredentials(GoogleCredentials.fromStream(json.byteInputStream()))
+            .setConnectTimeout(3_000)
+            .setReadTimeout(5_000)
+            .setWriteTimeout(5_000)
             .build()
         // FirebaseApp은 JVM 전역 싱글턴이라 두 번 initializeApp 하면 IllegalStateException이다(컨텍스트 재기동 대비).
         val app = FirebaseApp.getApps().firstOrNull { it.name == FirebaseApp.DEFAULT_APP_NAME }

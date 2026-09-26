@@ -9,6 +9,10 @@ import org.springframework.stereotype.Component
 @Component
 class PushSendMeters : MeterBinder {
     override fun bindTo(registry: MeterRegistry) {
+        listOf("success", "retry", "discard", "dlq").forEach { outcome ->
+            Counter.builder(com.knk.manyak.notification.push.consumer.NotificationConsumer.METRIC)
+                .description("큐 알림 소비 결과").tag("outcome", outcome).register(registry)
+        }
         FcmPushSender.OUTCOMES.forEach { outcome ->
             Counter.builder(FcmPushSender.METRIC_PUSH_SEND_RESULT)
                 .description("FCM 푸시 발송 결과")

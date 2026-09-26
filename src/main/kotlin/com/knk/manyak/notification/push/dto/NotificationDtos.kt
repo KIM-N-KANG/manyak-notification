@@ -22,6 +22,7 @@ data class NotificationResponse(
     val sent: Int = 0,
     val unregistered: Int = 0,
     val failed: Int = 0,
+    @get:com.fasterxml.jackson.annotation.JsonIgnore val retryable: Int = 0,
 )
 
 data class PushEligibilityResponse(
