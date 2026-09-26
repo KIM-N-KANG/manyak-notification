@@ -78,7 +78,20 @@ Android는 data-only이며 서비스 알림은 HIGH, 광고 알림은 NORMAL입�
 
 ## GHCR 이미지와 로컬 컨테이너
 
-`Docker Image` 워크플로는 dev 대상 PR에서 테스트와 이미지 빌드만 수행합니다. dev push에서는 테스트 후 `ghcr.io/kim-n-kang/manyak-notification:<short-sha>`와 `:dev`를 함께 올립니다. 플랫폼은 `linux/amd64,linux/arm64`입니다. 수동 실행은 테스트와 빌드만 하며 이미지를 올리지 않습니다. ECR, AWS 인증, ECS 배포는 없습니다.
+`Docker Image` 워크플로는 dev 대상 PR과 수동 실행에서 테스트·이미지 빌드만 수행하며, 이미지 push와 ECS 배포는 하지 않습니다. dev push에서는 테스트 후 `ghcr.io/kim-n-kang/manyak-notification:<short-sha>`만 게시합니다. 빌드 단계에서 `:dev`를 붙이지 않으며 플랫폼은 `linux/amd64,linux/arm64`입니다.
+
+dev push의 빌드가 성공하면 다음 순서로 자동 배포합니다.
+
+1. `vars.AWS_DEV_ROLE_ARN`의 역할을 사용해 OIDC로 AWS에 인증합니다.
+2. `manyak-dev` 서비스의 진행 중인 배포가 안정화될 때까지 기다립니다.
+3. 최신 dev SHA를 확인하고, 대기 중 더 새 커밋이 올라왔으면 승격·배포를 건너뜁니다.
+4. `docker buildx imagetools create`로 해당 SHA 이미지를 `:dev`로 승격합니다. 멀티아키 인덱스를 유지합니다.
+5. `manyak-dev` 클러스터의 같은 이름 서비스에 `force-new-deployment`를 요청합니다. 새 태스크 정의를 등록하지 않고 기존 정의의 `:dev` 이미지를 다시 pull합니다.
+6. 생성한 배포 id의 완료를 확인한 뒤 `server`·`ai`·`notification` 컨테이너가 모두 HEALTHY인지 검사합니다. 헬스체크가 없는 `log_router`는 판정에서 제외합니다.
+
+**dev push는 알림 컨테이너뿐 아니라 서버·DB(PostgreSQL)·Redis·AI·알림·로그 라우터가 함께 있는 dev 태스크 전체를 재시작합니다.** dev는 기존 태스크를 종료하고 새 태스크를 시작하므로 짧은 중단이 있습니다. 배포는 같은 레포 안에서 직렬화하며, 서버·AI 등 다른 레포와의 경합은 안정화 대기로 완화하지만 완전히 직렬화하지는 않습니다.
+
+자동 배포 전 Terraform으로 notification 컨테이너가 포함된 dev 태스크 정의와 이 레포의 dev 브랜치를 신뢰하는 OIDC 배포 역할·ECS 배포 및 조회 권한을 apply해야 합니다. 레포 Actions 변수 `AWS_DEV_ROLE_ARN`에 그 역할 ARN을 설정하고 ECS의 GHCR 이미지 pull 권한도 준비해야 합니다. 이 선행조건이 없으면 dev push의 배포 단계가 실패합니다.
 
 PR 머지 후 이미지가 게시되면 세 환경변수를 설정한 터미널에서 실행합니다. 아래 서버 주소는 Docker Desktop에서 호스트의 서버 8080에 연결하는 예입니다. Linux에서는 호스트 주소를 환경에 맞게 바꿉니다.
 
