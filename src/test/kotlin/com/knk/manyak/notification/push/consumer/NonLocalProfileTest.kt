@@ -15,7 +15,9 @@ import java.net.http.HttpRequest
 import java.net.http.HttpResponse
 
 @SpringBootTest(webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT,
-    properties = ["spring.kafka.bootstrap-servers=127.0.0.1:1", "spring.data.redis.port=1"])
+    properties = ["spring.kafka.bootstrap-servers=127.0.0.1:1", "spring.data.redis.port=1",
+        "manyak.push.queue-url=https://sqs.ap-northeast-2.amazonaws.com/123456789012/push",
+        "spring.cloud.aws.sqs.enabled=false"])
 abstract class NonLocalProfileTest {
     @LocalServerPort var port: Int = 0
     @Autowired lateinit var context: ApplicationContext

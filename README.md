@@ -135,6 +135,21 @@ SDK 내부 재시도는 0회(실제 대기 0초, RetryConfig의 최소 대기 �
 
 FCM 비활성은 `FCM_DISABLED`로 DISCARD합니다. 소비 메트릭 `manyak.push.consume.result{outcome=success|retry|discard|dlq}`도 기동 시 0으로 등록합니다. 메시지의 requestId/sessionId는 MDC와 자격 조회 헤더로 전달하고 처리 후 기존 MDC를 복구합니다.
 
-Kafka는 `spring-kafka`로 직접 구성하며 dev/prod에는 클라이언트·리스너를 만들지 않습니다. Redis health는 소비가 있는 local에서만 켭니다. dev/prod의 SQS 어댑터는 후속 작업입니다.
+Kafka는 `spring-kafka`로 직접 구성하며 dev/prod에는 클라이언트·리스너를 만들지 않습니다. Redis health는 소비가 있는 local에서만 켭니다.
 
 테스트는 Docker에서 별도 Redis/Kafka Testcontainers를 띄웁니다. 기존 compose 컨테이너를 사용하지 않습니다.
+
+
+## SQS 소비(dev/prod)
+
+`dev` 또는 `prod` 프로파일에서는 SQS 어댑터만 등록합니다. `local`과 함께 활성화해도 Kafka 리스너는 등록하지 않습니다. 기본 프로파일과 local에서는 `spring.cloud.aws.sqs.enabled=false`로 SQS 자동 구성을 꺼 AWS에 접근하지 않습니다.
+
+`MANYAK_PUSH_QUEUE_URL`은 필수이며 비어 있으면 dev/prod 기동에 실패합니다. Terraform이 만든 서울 리전(`ap-northeast-2`) 표준 큐 URL을 넣습니다. 자격증명은 AWS SDK 기본 체인으로 ECS 태스크 역할을 사용합니다. dev 컨테이너는 Terraform의 `SERVER_PORT=8081`을 따르며 코드 기본 포트 8080은 유지합니다.
+
+Spring Cloud AWS BOM과 SQS 스타터는 4.1.1입니다. 본문 문자열을 Jackson 3으로 파싱·검증한 뒤 기존 소비자에 넘깁니다. `ON_SUCCESS` ack로 SUCCESS/DISCARD만 삭제합니다. RETRY, JSON 파싱 및 검증 오류는 예외로 전파해 삭제하지 않습니다. 직접 DLQ에 보내지 않으며 Terraform의 가시성 60초와 `maxReceiveCount=5`에 따라 재수신 및 DLQ 이동을 맡깁니다.
+
+가시성을 덮어쓰거나 `ChangeMessageVisibility`로 연장하지 않습니다. 가시성을 바꾸는 오류 핸들러도 등록하지 않습니다. 처리 중 60초가 지나 재수신해도 Redis의 BUSY는 RETRY, DONE은 SUCCESS로 처리합니다. 소비자의 재시도 검증 설정은 큐와 같은 60000ms·5회를 유지해야 합니다.
+
+롱폴링은 20초, 동시 처리와 폴당 최대 수신은 각각 2개입니다. 라이브러리 기본값인 10초·10개·10개보다 공유 dev 태스크의 FCM/API 부하를 줄이고 빈 큐 요청 간격을 늘립니다. 빈 큐에서 인스턴스·큐당 폴러 하나를 가정하면 분당 약 3회, 하루 4320회, 30일 129600회의 ReceiveMessage 요청이 발생합니다. 오류·재시작·추가 인스턴스는 별도입니다.
+
+상관 ID와 `manyak.push.consume.result{outcome=success|retry|discard}`는 기존 소비자가 기록합니다. SQS에는 DltHandler가 없어 DLQ 도착 시 애플리케이션의 `outcome=dlq`를 증가시키지 않습니다. 기존 공통 카운터에 dlq가 0으로 등록될 수 있지만 SQS DLQ 도착 수를 뜻하지 않습니다. DLQ 모니터링은 [KNK-1381](https://kimandkang.atlassian.net/browse/KNK-1381)의 CloudWatch 경보에서 처리합니다.
