@@ -26,7 +26,8 @@ class FcmConfig {
         val options = FirebaseOptions.builder()
             .setCredentials(ServiceAccountCredentials.fromStream(json.byteInputStream()).createWithCustomRetryStrategy(false))
             .setConnectTimeout(1_000)
-            .setReadTimeout(1_000)
+            // 1초면 새 연결의 첫 발송이 응답 전에 끊겨 FCM은 전달했는데 재시도로 한 번 더 보낸다(KNK-1567).
+            .setReadTimeout(5_000)
             .setWriteTimeout(1_000)
             .build()
         // FirebaseApp은 JVM 전역 싱글턴이라 두 번 initializeApp 하면 IllegalStateException이다(컨텍스트 재기동 대비).
