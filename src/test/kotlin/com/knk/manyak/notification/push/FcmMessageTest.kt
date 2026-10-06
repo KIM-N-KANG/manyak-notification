@@ -31,6 +31,33 @@ class FcmMessageTest {
         }
     }
 
+    @Test fun `FCM 성공과 실패는 각각 관측을 한번 종료한다`() {
+        for (fail in listOf(false, true)) {
+            val observations = io.micrometer.observation.ObservationRegistry.create()
+            val started = mutableListOf<io.micrometer.observation.Observation.Context>()
+            val stopped = mutableListOf<io.micrometer.observation.Observation.Context>()
+            observations.observationConfig().observationHandler(object : io.micrometer.observation.ObservationHandler<io.micrometer.observation.Observation.Context> {
+                override fun supportsContext(context: io.micrometer.observation.Observation.Context) = true
+                override fun onStart(context: io.micrometer.observation.Observation.Context) { started.add(context) }
+                override fun onStop(context: io.micrometer.observation.Observation.Context) { stopped.add(context) }
+            })
+            val sdk = mock(FirebaseMessaging::class.java)
+            org.mockito.Mockito.doAnswer {
+                assertThat(observations.currentObservation?.context?.name).isEqualTo("fcm.send")
+                if (fail) throw IllegalStateException("SDK failure")
+                "sent"
+            }.`when`(sdk).send(org.mockito.ArgumentMatchers.any(Message::class.java))
+            FcmPushSender(sdk, client, registry, observationRegistry = observations).sendToUser(
+                publicId, listOf(PushEligibilityToken("test-token", PushPlatform.ANDROID)), mapOf("title" to "제목"))
+            assertThat(started).hasSize(1)
+            assertThat(stopped).containsExactly(started.single())
+            assertThat(stopped.single().getLowCardinalityKeyValue("platform")?.value).isEqualTo("android")
+            assertThat(stopped.single().getLowCardinalityKeyValue("outcome")?.value).isEqualTo(if (fail) "failure" else "success")
+            assertThat(stopped.single().error != null).isEqualTo(fail)
+            assertThat(observations.currentObservation).isNull()
+        }
+    }
+
     /** [Message]는 data 접근자가 없어 SDK 내부 필드를 읽는다. 키 이름이 바뀌면 이 헬퍼만 고친다. */
     @Suppress("UNCHECKED_CAST")
     private fun dataOf(message: Message): Map<String, String> =

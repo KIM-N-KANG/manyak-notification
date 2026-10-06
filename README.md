@@ -129,7 +129,7 @@ RETRY는 `push.requested.retry`에서 고정 60초 간격으로 최초 포함 �
 
 `MANYAK_PUSH_CONSUMER_PROCESSING_TTL_MS`(기본 120000)는 `(retry-attempts - 1) × retry-delay-ms`보다 반드시 짧아야 합니다. `MANYAK_PUSH_CONSUMER_PROCESSING_BUDGET_MS`(기본 10000)는 양수이고 TTL보다 짧아야 합니다. 시도 횟수가 2 미만이거나 간격이 양수가 아니거나 이 조건을 위반하면 기동에 실패합니다. 재시도 간격을 축소한 테스트에서는 TTL과 처리 예산도 함께 축소해야 합니다. 예를 들어 FCM/API를 mock한 자동 테스트는 간격 1000ms, TTL 2500ms, 예산 100ms를 사용합니다. 실제 FCM 환경에서는 아래 네트워크 예산도 고려해야 합니다.
 
-SDK 내부 재시도는 0회(실제 대기 0초, RetryConfig의 최소 대기 상한 500ms), FCM connect/read/write는 각각 1초입니다. OAuth 자격 갱신의 내부 재시도도 끕니다. 기본 처리 예산의 보수적 합은 `10 + 3 + 2×40 + 3 + 4×2 = 104초`로 2분 선점보다 짧습니다(새 기기 시작 예산, 마지막 FCM 요청, OAuth connect/read 갱신 최대 두 번, 서버 정리, Redis 작업). 시간 설정의 근거는 `ConsumerTimingProperties` KDoc에 있습니다. SDK 9.10.0의 package-private builder를 작은 연결 클래스에서 사용하므로 SDK 교체 시 실제 SDK 재시도 테스트를 확인해야 합니다.
+SDK 내부 재시도는 0회(실제 대기 0초, RetryConfig의 최소 대기 상한 500ms), FCM connect/write는 1초, read는 5초입니다. OAuth 자격 갱신의 내부 재시도도 끕니다. 기본 처리 예산의 보수적 합은 `10 + 7 + 2×40 + 3 + 4×2 = 108초`로 2분 선점보다 짧습니다(새 기기 시작 예산, 마지막 FCM 요청, OAuth connect/read 갱신 최대 두 번, 서버 정리, Redis 작업). 시간 설정의 근거는 `ConsumerTimingProperties` KDoc에 있습니다. SDK 9.10.0의 package-private builder를 작은 연결 클래스에서 사용하므로 SDK 교체 시 실제 SDK 재시도 테스트를 확인해야 합니다.
 
 처리 중 소비자가 죽으면 선점 만료 후 남은 재시도에서 새 소비자가 처리합니다. 선점은 자동 연장하지 않습니다. JVM 정지 등으로 처리 시간이 TTL을 넘으면 **유실보다 중복을 허용**하며, 이전 소유자의 완료/삭제는 소유자 비교로 차단합니다.
 

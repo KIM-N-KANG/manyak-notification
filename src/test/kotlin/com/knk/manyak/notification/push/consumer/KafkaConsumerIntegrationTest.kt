@@ -31,7 +31,10 @@ import java.util.UUID
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.atomic.AtomicInteger
 
-@SpringBootTest
+@SpringBootTest(properties = [
+    "management.tracing.export.enabled=true",
+    "management.tracing.export.otlp.enabled=false",
+])
 @ActiveProfiles("local")
 class KafkaConsumerIntegrationTest {
     companion object {
@@ -120,6 +123,29 @@ class KafkaConsumerIntegrationTest {
         verify(messaging, times(1)).send(any(Message::class.java))
         assertThat(meters.get(NotificationConsumer.METRIC).tag("outcome", "retry").counter().count() - retriesBefore).isBetween(1.0, 4.0)
         assertThat(meters.get(NotificationConsumer.METRIC).tag("outcome", "dlq").counter().count()).isEqualTo(dlqBefore)
+    }
+
+    @Autowired lateinit var tracer: io.micrometer.tracing.Tracer
+
+    @Test fun `Kafka traceparent의 traceId를 소비 스코프에서 복원한다`() {
+        val traceId = "0123456789abcdef0123456789abcdef"
+        val received = java.util.concurrent.atomic.AtomicReference<String>()
+        `when`(client.getEligibility(anyValue(), anyValue(), anyValue())).thenAnswer {
+            received.set(tracer.currentSpan()?.context()?.traceId())
+            PushEligibilityResponse(false, "DENIED", emptyList())
+        }
+        val message = message()
+        // 관측이 켜진 KafkaTemplate이 테스트 헤더를 새 송신 스팬으로 덮지 않도록 원시 producer를 사용한다.
+        org.apache.kafka.clients.producer.KafkaProducer<String, ByteArray>(mapOf(
+            "bootstrap.servers" to kafka.bootstrapServers,
+            "key.serializer" to org.apache.kafka.common.serialization.StringSerializer::class.java,
+            "value.serializer" to org.apache.kafka.common.serialization.ByteArraySerializer::class.java,
+        )).use { producer ->
+            val record = org.apache.kafka.clients.producer.ProducerRecord("push.requested", message.recipientId.toString(), mapper.writeValueAsBytes(message))
+            record.headers().add("traceparent", "00-$traceId-0123456789abcdef-01".toByteArray(Charsets.UTF_8))
+            producer.send(record).get()
+        }
+        await().atMost(Duration.ofSeconds(30)).untilAsserted { assertThat(received.get()).isEqualTo(traceId) }
     }
 
     private fun message() = PushMessage(UUID.randomUUID().toString(), UUID.randomUUID(), PushKind.SERVICE, "STORY_COMPLETED", mapOf("type" to "STORY_COMPLETED"), null, "request", "session", 1)
