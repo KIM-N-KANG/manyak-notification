@@ -28,6 +28,10 @@ dependencyManagement {
 dependencies {
     implementation("org.springframework.boot:spring-boot-starter-web")
     implementation("org.springframework.boot:spring-boot-starter-actuator")
+    implementation("org.springframework.boot:spring-boot-starter-opentelemetry") {
+        exclude(group = "io.opentelemetry", module = "opentelemetry-exporter-sender-okhttp")
+    }
+    runtimeOnly("io.opentelemetry:opentelemetry-exporter-sender-jdk")
     implementation("org.springframework.boot:spring-boot-starter-validation")
     implementation("org.springframework.boot:spring-boot-starter-data-redis")
     implementation("org.springframework.kafka:spring-kafka")

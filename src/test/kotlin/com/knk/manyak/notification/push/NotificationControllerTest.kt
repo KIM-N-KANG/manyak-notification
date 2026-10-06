@@ -40,7 +40,7 @@ import java.util.UUID
 
 class NotificationControllerTest {
     private val recipient = UUID.randomUUID()
-    private val builder = PushClientConfig().serverRestClientBuilder()
+    private val builder = PushClientConfig().serverRestClientBuilder(io.micrometer.observation.ObservationRegistry.NOOP)
     private val server = MockRestServiceServer.bindTo(builder).build()
     private val client = PushEligibilityClient(builder, "http://server", "test-secret")
     private val messaging = mock(FirebaseMessaging::class.java)
