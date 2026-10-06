@@ -61,6 +61,8 @@ class NotificationConsumer(
             val previous = MDC.getCopyOfContextMap()
             try {
                 MDC.clear()
+                // 리스너 관측이 설치한 추적 키만 유지하고 메시지별 상관 ID는 새로 넣는다.
+                for (key in listOf("traceId", "spanId")) previous?.get(key)?.let { MDC.put(key, it) }
                 MDC.put("request_id", message.requestId)
                 MDC.put("session_id", message.sessionId)
                 return action()

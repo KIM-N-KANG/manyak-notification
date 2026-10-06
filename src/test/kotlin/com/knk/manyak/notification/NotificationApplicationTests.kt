@@ -2,6 +2,8 @@ package com.knk.manyak.notification
 
 import org.assertj.core.api.Assertions.assertThat
 import org.junit.jupiter.api.Test
+import org.springframework.beans.factory.annotation.Autowired
+import org.springframework.core.env.Environment
 import org.springframework.boot.test.context.SpringBootTest
 import org.springframework.boot.test.web.server.LocalServerPort
 import java.net.URI
@@ -11,6 +13,15 @@ import java.net.http.HttpResponse
 
 @SpringBootTest(webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT)
 class NotificationApplicationTests {
+    @Autowired
+    private lateinit var environment: Environment
+
+    @Test
+    fun `OTLP 메트릭 내보내기는 기본으로 비활성화된다`() {
+        assertThat(environment.getProperty("management.otlp.metrics.export.enabled", Boolean::class.javaObjectType))
+            .isEqualTo(false)
+    }
+
     @LocalServerPort
     private var port: Int = 0
 

@@ -1,5 +1,7 @@
 package com.knk.manyak.notification.push.consumer
 
+import io.micrometer.observation.ObservationRegistry
+import com.knk.manyak.notification.global.observability.ObservationTaskDecorator
 import org.apache.kafka.clients.consumer.ConsumerConfig
 import org.apache.kafka.clients.producer.ProducerConfig
 import org.apache.kafka.common.serialization.ByteArrayDeserializer
@@ -25,6 +27,8 @@ import org.springframework.scheduling.concurrent.ThreadPoolTaskScheduler
 @EnableKafka
 class KafkaConsumerConfig(
     @Value("\${spring.kafka.bootstrap-servers:localhost:9092}") private val bootstrapServers: String,
+    private val observationRegistry: ObservationRegistry,
+    @Value("\${spring.kafka.listener.observation-enabled:false}") private val observationEnabled: Boolean,
 ) : RetryTopicConfigurationSupport() {
     @Bean
     fun kafkaProducerFactory() = DefaultKafkaProducerFactory<String, ByteArray>(mapOf(
@@ -36,7 +40,10 @@ class KafkaConsumerConfig(
     ))
 
     @Bean
-    fun kafkaTemplate() = KafkaTemplate(kafkaProducerFactory())
+    fun kafkaTemplate() = KafkaTemplate(kafkaProducerFactory()).apply {
+        setObservationEnabled(observationEnabled)
+        setObservationRegistry(observationRegistry)
+    }
 
     @Bean
     fun kafkaListenerContainerFactory(): ConcurrentKafkaListenerContainerFactory<String, ByteArray> =
@@ -53,10 +60,16 @@ class KafkaConsumerConfig(
             )))
             containerProperties.ackMode = ContainerProperties.AckMode.RECORD
             containerProperties.pollTimeout = 250
+            containerProperties.isObservationEnabled = observationEnabled
+            containerProperties.observationRegistry = observationRegistry
         }
 
     @Bean
-    fun taskScheduler() = ThreadPoolTaskScheduler().apply { poolSize = 1; setThreadNamePrefix("push-retry-") }
+    fun taskScheduler() = ThreadPoolTaskScheduler().apply {
+        poolSize = 1
+        setThreadNamePrefix("push-retry-")
+        setTaskDecorator(ObservationTaskDecorator())
+    }
 
     override fun configureCustomizers(customizersConfigurer: CustomizersConfigurer) {
         // 재시도/DLQ 발행 확인 실패는 원본 오프셋 커밋으로 이어지면 안 된다.

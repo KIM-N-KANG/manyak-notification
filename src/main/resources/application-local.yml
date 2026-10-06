@@ -11,3 +11,8 @@ management:
     metrics:
       export:
         enabled: true
+
+spring:
+  kafka:
+    listener:
+      observation-enabled: true

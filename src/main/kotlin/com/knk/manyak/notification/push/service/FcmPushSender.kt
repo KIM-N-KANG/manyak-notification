@@ -13,6 +13,8 @@ import com.knk.manyak.notification.push.dto.NotificationOutcome
 import com.knk.manyak.notification.push.dto.NotificationResponse
 import com.knk.manyak.notification.push.dto.PushEligibilityToken
 import com.knk.manyak.notification.push.dto.PushPlatform
+import io.micrometer.observation.Observation
+import io.micrometer.observation.ObservationRegistry
 import io.micrometer.core.instrument.Counter
 import io.micrometer.core.instrument.MeterRegistry
 import org.slf4j.LoggerFactory
@@ -31,6 +33,7 @@ class FcmPushSender(
     private val webIconUrl: String = "https://manyak.app/icons/icon-192.png",
     @Value("\${manyak.push.web-base-url:https://manyak.app}")
     private val webBaseUrl: String = "https://manyak.app",
+    private val observationRegistry: ObservationRegistry = ObservationRegistry.NOOP,
 ) {
     private val log = LoggerFactory.getLogger(javaClass)
 
@@ -106,7 +109,7 @@ class FcmPushSender(
                 )
             }
             val message = builder.build()
-            messaging.send(message)
+            sendObserved(messaging, message, deviceToken.platform)
             count(OUTCOME_SUCCESS)
             return OUTCOME_SUCCESS
         } catch (ex: FirebaseMessagingException) {
@@ -147,6 +150,24 @@ class FcmPushSender(
                 recipientId, mask(deviceToken.token), ex.javaClass.simpleName,
             )
             return if (ex is IllegalArgumentException) OUTCOME_FAILURE else OUTCOME_RETRY
+        }
+    }
+
+    private fun sendObserved(messaging: FirebaseMessaging, message: Message, platform: PushPlatform) {
+        val observation = Observation.createNotStarted("fcm.send", observationRegistry)
+            .lowCardinalityKeyValue("platform", platform.name.lowercase()).start()
+        try {
+            observation.openScope().use {
+                messaging.send(message)
+                observation.lowCardinalityKeyValue("outcome", OUTCOME_SUCCESS)
+            }
+        } catch (ex: Throwable) {
+            val outcome = if (ex is FirebaseMessagingException && ex.messagingErrorCode == MessagingErrorCode.UNREGISTERED)
+                OUTCOME_UNREGISTERED else OUTCOME_FAILURE
+            observation.lowCardinalityKeyValue("outcome", outcome).error(ex)
+            throw ex
+        } finally {
+            observation.stop()
         }
     }
 
