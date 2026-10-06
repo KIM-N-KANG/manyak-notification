@@ -15,6 +15,13 @@ server:
   port: 8080
 
 management:
+  otlp:
+    metrics:
+      export:
+        # 기본 off다. 추적 스타터가 가져오는 OTLP 메트릭의 기본 URL은 localhost:4318/v1/metrics라,
+        # 켜 두면 모든 프로파일에서 매 전송 주기마다 localhost로 헛전송한다.
+        # endpoint·인증 헤더를 먼저 주입한 뒤 이 토글을 켠다.
+        enabled: ${MANYAK_OTLP_METRICS_ENABLED:false}
   tracing:
     export:
       enabled: ${MANYAK_TRACING_ENABLED:false}
