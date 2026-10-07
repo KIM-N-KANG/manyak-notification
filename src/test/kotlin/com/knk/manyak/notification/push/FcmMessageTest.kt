@@ -130,13 +130,30 @@ class FcmMessageTest {
     }
 
     @Test
-    fun `WEB 스토리 완성은 본문과 딥링크 없이도 홈 링크로 보낸다`() {
+    fun `WEB 스토리 완성은 Android와 같은 문구로 표시하고 data 제목과 홈 링크를 유지한다`() {
         sender.sendToUser(publicId, listOf(PushEligibilityToken("token", PushPlatform.WEB)), mapOf("type" to "STORY_COMPLETED", "title" to "스토리"))
         val captor = ArgumentCaptor.forClass(Message::class.java)
         verify(messaging).send(captor.capture())
         val webpush = fieldOf(captor.value, "webpushConfig")!!
         assertThat(fieldOf(fieldOf(webpush, "fcmOptions")!!, "link")).isEqualTo("https://manyak.app")
-        assertThat((fieldOf(webpush, "notification") as Map<*, *>)["title"]).isEqualTo("스토리")
+        val notification = fieldOf(webpush, "notification") as Map<*, *>
+        assertThat(notification["title"]).isEqualTo("스토리가 완성됐어요")
+        assertThat(notification["body"]).isEqualTo("스토리")
+        assertThat(dataOf(captor.value)).containsEntry("type", "STORY_COMPLETED").containsEntry("title", "스토리")
+        assertThat(dataOf(captor.value)).doesNotContainKey("body")
+    }
+
+    @Test
+    fun `WEB 검수 완료는 data 제목과 본문을 그대로 표시한다`() {
+        val data = mapOf("type" to "STORY_MODERATION_COMPLETED", "title" to "검수를 통과했어요", "body" to "스토리의 등록이 완료됐어요")
+        sender.sendToUser(publicId, listOf(PushEligibilityToken("token", PushPlatform.WEB)), data)
+        val captor = ArgumentCaptor.forClass(Message::class.java)
+        verify(messaging).send(captor.capture())
+        val webpush = fieldOf(captor.value, "webpushConfig")!!
+        val notification = fieldOf(webpush, "notification") as Map<*, *>
+        assertThat(notification["title"]).isEqualTo(data["title"])
+        assertThat(notification["body"]).isEqualTo(data["body"])
+        assertThat(dataOf(captor.value)).containsAllEntriesOf(data)
     }
 
 }
