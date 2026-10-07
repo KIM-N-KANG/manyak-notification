@@ -95,12 +95,13 @@ class FcmPushSender(
                         .apply { ttlMillis?.let { setTtl(it.coerceAtMost(MAX_TTL_MILLIS)) } }
                         .build(),
                 )
+                // 스토리 완성은 Android 앱과 같은 제목과 본문 배치로 표시한다.
                 PushPlatform.WEB -> builder.setWebpushConfig(
                     WebpushConfig.builder()
                         .setNotification(
                             WebpushNotification.builder()
-                                .setTitle(data["title"])
-                                .setBody(data["body"])
+                                .setTitle(if (data["type"] == "STORY_COMPLETED") STORY_COMPLETED_TITLE else data["title"])
+                                .setBody(if (data["type"] == "STORY_COMPLETED") data["title"] else data["body"])
                                 .setIcon(webIconUrl)
                                 .build(),
                         )
@@ -194,6 +195,7 @@ class FcmPushSender(
         const val OUTCOME_FAILURE = "failure"
         private const val OUTCOME_RETRY = "retry"
         val OUTCOMES = listOf(OUTCOME_SUCCESS, OUTCOME_UNREGISTERED, OUTCOME_FAILURE)
+        private const val STORY_COMPLETED_TITLE = "스토리가 완성됐어요"
         private const val TOKEN_LOG_PREFIX = 12
     }
 }
