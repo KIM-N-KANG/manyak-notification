@@ -56,7 +56,7 @@ curl -i -X POST http://localhost:8081/internal/notifications \
 
 `kind`는 `SERVICE` 또는 `MARKETING`입니다. 먼저 만료를 검사하고 현재 시각으로 자격 API를 조회합니다. 거절되면 보내지 않고, 허용된 토큰마다 한 번씩 FCM을 호출합니다. 자격 조회 중 만료되어도 발송하지 않습니다.
 
-Android는 data-only이며 서비스 알림은 HIGH, 광고 알림은 NORMAL입니다. `expiresAt`을 지정하면 남은 시간을 Android TTL로 사용하고 생략하면 FCM 기본 TTL을 유지합니다. WEB은 제목, 본문, 아이콘, 클릭 링크를 가진 webpush notification입니다. 광고 표기 등 시나리오 문구는 호출자가 `data`에 준비합니다. 최상위 `type`과 `recipientId`는 같은 이름의 `data` 값보다 우선합니다.
+Android는 data-only이며 서비스 알림은 HIGH, 광고 알림은 NORMAL입니다. `expiresAt`을 지정하면 남은 시간을 Android TTL로 사용하고 생략하면 FCM 기본 TTL을 유지합니다. WEB은 제목, 본문, 아이콘, 클릭 링크를 가진 webpush notification입니다. `STORY_COMPLETED`는 Android와 같은 배치로 제목 `스토리가 완성됐어요`, 본문 data의 `title`(스토리 제목)을 표시하며 data 페이로드는 그대로 유지합니다. 광고 표기 등 시나리오 문구는 호출자가 `data`에 준비합니다. 최상위 `type`과 `recipientId`는 같은 이름의 `data` 값보다 우선합니다.
 
 ```json
 {"outcome":"SENT","reason":"OK","sent":2,"unregistered":0,"failed":0}
@@ -121,7 +121,7 @@ docker run --rm --name manyak-notification -p 8081:8080 \
 
 `SPRING_PROFILES_ACTIVE=local`에서 `push.requested`를 그룹 `notification`으로 소비합니다. `SPRING_KAFKA_BOOTSTRAP_SERVERS` 기본값은 `localhost:9092`, Redis는 `SPRING_DATA_REDIS_HOST`/`SPRING_DATA_REDIS_PORT`로 설정합니다. compose는 각각 `kafka:19092`, `redis:6379`를 주입합니다. 토픽 세 개는 infra의 `kafka-init`이 생성해야 하며 자동 생성하지 않습니다.
 
-`messageId`, UUID `recipientId`, `kind`, `type`, 문자열 맵 `data`, `requestId`, `sessionId`, `schemaVersion: 1`이 필수이고 `expiresAt`은 선택입니다. `data.type`은 최상위 `type`과 일치해야 합니다. `STORY_COMPLETED`와 `STORY_MODERATION_COMPLETED`는 SERVICE, `ATTENDANCE_REMINDER`와 `PROMOTION`은 MARKETING입니다. 검수 완료는 `story-moderation:{submissionId}:{attempt}`로 회차를 구분하며, data의 `submissionId`·`status`·선택적 `storyId`·`deepLink`를 그대로 전달합니다. 서버 local 발송과 같이 Android는 HIGH·data-only·TTL 미지정이며, 웹의 제목·본문은 data에 있을 때만 사용하고 별도 문구를 만들지 않습니다. 메시지에 동의나 토큰을 저장하지 않고 매 처리마다 서버 자격을 재조회합니다.
+`messageId`, UUID `recipientId`, `kind`, `type`, 문자열 맵 `data`, `requestId`, `sessionId`, `schemaVersion: 1`이 필수이고 `expiresAt`은 선택입니다. `data.type`은 최상위 `type`과 일치해야 합니다. `STORY_COMPLETED`와 `STORY_MODERATION_COMPLETED`는 SERVICE, `ATTENDANCE_REMINDER`와 `PROMOTION`은 MARKETING입니다. 검수 완료는 `story-moderation:{submissionId}:{attempt}`로 회차를 구분하며, data의 `submissionId`·`status`·선택적 `storyId`·`deepLink`를 그대로 전달합니다. 서버 local 발송과 같이 Android는 HIGH·data-only·TTL 미지정이며, 검수 완료의 웹 제목·본문은 data에 있을 때만 사용하고 별도 문구를 만들지 않습니다. 메시지에 동의나 토큰을 저장하지 않고 매 처리마다 서버 자격을 재조회합니다.
 
 완료·폐기는 `notification:processed:{messageId}`에 7일 기록합니다. 처리 중 키는 SET NX와 기본 2분 TTL로 선점하고 RETRY 때 해제합니다. 기본 10초의 처리 예산이 지나면 새 기기 발송을 시작하지 않고 다음 전달에서 이어갑니다. 성공 기기의 SHA-256 토큰 해시는 `notification:sent:{messageId}`에 7일 보존하여 재전달 때 제외합니다. Redis 기록 실패 시 재시도하며, FCM 성공과 Redis 기록 사이 장애는 중복 발송 가능성이 있습니다.
 
