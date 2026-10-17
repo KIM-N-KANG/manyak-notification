@@ -21,6 +21,7 @@ class NotificationConsumer(
     fun onMessage(message: PushMessage): ConsumeResult = withCorrelation(message) {
         val owner = UUID.randomUUID().toString()
         var acquired = false
+        var reason: String? = null
         val result = try {
             when (store.claim(message.messageId, owner)) {
                 Claim.DONE -> ConsumeResult.SUCCESS
@@ -34,12 +35,12 @@ class NotificationConsumer(
                         onSent = { store.recordSent(message.messageId, owner, it) },
                         beforeSend = { check(System.nanoTime() < deadline) { "Notification processing budget exhausted" } },
                     )
+                    reason = response.reason
                     val outcome = when {
                         response.retryable > 0 || response.reason == "ELIGIBILITY_UNAVAILABLE" -> ConsumeResult.RETRY
                         response.outcome == NotificationOutcome.SENT -> ConsumeResult.SUCCESS
                         else -> ConsumeResult.DISCARD
                     }
-                    log.info("큐 알림 처리 결과 (messageId={}, result={}, reason={})", message.messageId, outcome, response.reason)
                     if (outcome == ConsumeResult.RETRY) store.release(message.messageId, owner)
                     else store.complete(message.messageId, owner)
                     outcome
@@ -51,6 +52,7 @@ class NotificationConsumer(
             log.warn("큐 알림 처리 재시도 (messageId={}, error={})", message.messageId, ex.javaClass.simpleName)
             ConsumeResult.RETRY
         }
+        log.info("큐 알림 처리 결과 (messageId={}, result={}, reason={})", message.messageId, result, reason)
         registry.counter(METRIC, "outcome", result.name.lowercase()).increment()
         result
     }

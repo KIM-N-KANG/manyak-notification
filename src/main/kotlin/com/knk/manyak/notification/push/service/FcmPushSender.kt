@@ -20,6 +20,7 @@ import io.micrometer.core.instrument.MeterRegistry
 import org.slf4j.LoggerFactory
 import org.springframework.beans.factory.annotation.Value
 import org.springframework.stereotype.Component
+import java.time.Clock
 import java.time.Duration
 import java.time.Instant
 import java.util.UUID
@@ -34,6 +35,7 @@ class FcmPushSender(
     @Value("\${manyak.push.web-base-url:https://manyak.app}")
     private val webBaseUrl: String = "https://manyak.app",
     private val observationRegistry: ObservationRegistry = ObservationRegistry.NOOP,
+    private val clock: Clock,
 ) {
     private val log = LoggerFactory.getLogger(javaClass)
 
@@ -56,7 +58,7 @@ class FcmPushSender(
             beforeSend()
             if (alreadySent(it.token)) OUTCOME_SUCCESS
             else {
-                val remaining = expiresAt?.let { end -> Duration.between(Instant.now(), end).toMillis() }
+                val remaining = expiresAt?.let { end -> Duration.between(clock.instant(), end).toMillis() }
                 if (remaining != null && remaining <= 0) OUTCOME_FAILURE
                 else sendTo(messaging, recipientId, it, payload, priority, remaining ?: ttlMillis).also { result ->
                     // SDK 예외 처리 밖에서 기록한다. 저장 실패를 영구 발송 실패로 삼키면 안 된다.

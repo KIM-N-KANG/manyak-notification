@@ -1,5 +1,12 @@
 package com.knk.manyak.notification.push.consumer
 
+import java.time.ZoneOffset
+import java.time.Clock
+import ch.qos.logback.classic.Level
+import ch.qos.logback.classic.Logger
+import ch.qos.logback.classic.spi.ILoggingEvent
+import ch.qos.logback.core.read.ListAppender
+import org.slf4j.LoggerFactory
 import com.google.firebase.messaging.FirebaseMessaging
 import com.google.firebase.messaging.Message
 import com.knk.manyak.notification.push.client.PushEligibilityClient
@@ -13,11 +20,13 @@ import java.time.Instant
 import java.util.UUID
 
 class NotificationConsumerTest {
+    private val now = Instant.parse("2030-01-01T00:00:00Z")
+    private val clock = Clock.fixed(now, ZoneOffset.UTC)
     private val client = mock(PushEligibilityClient::class.java)
     private val messaging = mock(FirebaseMessaging::class.java)
     private val store = MemoryStore()
     private val registry = SimpleMeterRegistry()
-    private val consumer = NotificationConsumer(NotificationService(client, FcmPushSender(messaging, client, registry)), store, registry)
+    private val consumer = NotificationConsumer(NotificationService(client, FcmPushSender(messaging, client, registry, clock = clock), clock), store, registry)
     private val message = PushMessage("id", UUID.randomUUID(), PushKind.SERVICE, "STORY_COMPLETED", mapOf("type" to "STORY_COMPLETED"), null, "request", "session", 1)
 
     private fun allow() {
@@ -48,6 +57,31 @@ class NotificationConsumerTest {
         `when`(client.getEligibility(anyValue(), anyValue(), anyValue())).thenThrow(IllegalStateException())
         assertThat(consumer.onMessage(message)).isEqualTo(ConsumeResult.RETRY)
         assertThat(store.state).isEqualTo(Claim.ACQUIRED)
+    }
+
+    @Test fun `각 선점 분기는 소비 지표와 일치하는 INFO 결과를 남긴다`() {
+        val logger = LoggerFactory.getLogger(NotificationConsumer::class.java) as Logger
+        val appender = ListAppender<ILoggingEvent>().apply { start() }
+        logger.addAppender(appender)
+        try {
+            listOf(
+                Triple(Claim.DONE, ConsumeResult.SUCCESS, null),
+                Triple(Claim.BUSY, ConsumeResult.RETRY, null),
+                Triple(Claim.ACQUIRED, ConsumeResult.DISCARD, "EXPIRED"),
+            ).forEach { (claim, expected, reason) ->
+                appender.list.clear()
+                store.state = claim
+                assertThat(consumer.onMessage(message.copy(expiresAt = Instant.EPOCH))).isEqualTo(expected)
+                val logs = appender.list.filter { it.level == Level.INFO }
+                assertThat(logs).hasSize(1)
+                assertThat(logs.single().formattedMessage).contains("messageId=id", "result=$expected", "reason=$reason")
+                assertThat(registry.get(NotificationConsumer.METRIC).tag("outcome", expected.name.lowercase()).counter().count()).isEqualTo(1.0)
+            }
+            verifyNoInteractions(client, messaging)
+        } finally {
+            logger.detachAppender(appender)
+            appender.stop()
+        }
     }
 
     class MemoryStore : DeliveryStore {
