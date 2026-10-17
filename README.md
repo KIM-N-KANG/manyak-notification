@@ -74,7 +74,7 @@ Android는 data-only이며 서비스 알림은 HIGH, 광고 알림은 NORMAL입�
 
 `UNREGISTERED`는 서버 삭제 API로 정리하며 삭제까지 성공하면 `unregistered`에 셉니다. 삭제 실패는 기존 서버 메트릭 관례대로 `failed`에 세고 다음 기기에 계속 보냅니다. `INVALID_ARGUMENT`는 페이로드 오류일 수 있어 삭제하지 않습니다. 동기 API는 애플리케이션 재시도를 하지 않습니다. 큐 소비는 아래 재전달 정책을 따릅니다.
 
-400 검증 실패와 내부 인증의 401·404는 `timestamp`(UTC ISO 8601), `status`, `code`, `message`, `path`, `details`를 반환합니다. 선언적 필드 검증과 요청 파라미터 타입 변환 실패의 `details`에는 `field`와 `message`를 담고, 본문 파싱 실패와 인증 실패는 빈 배열을 반환합니다. 자격 조회 실패의 502는 위 발송 결과 구조를 유지합니다.
+발송 자격 조회 실패의 502를 제외한 모든 실패(검증·인증, MVC 표준 오류, 예상하지 못한 500)는 `timestamp`(UTC ISO 8601), `status`, `code`, `message`, `path`, `details`를 반환합니다. 선언적 필드 검증과 요청 파라미터 타입 변환 실패의 `details`에는 `field`와 `message`를 담고, 본문 파싱 실패와 인증 실패는 빈 배열을 반환합니다. 자격 조회 실패의 502는 위 발송 결과 구조를 유지합니다.
 
 수동 요청 모음은 [http/notifications.http](http/notifications.http)에 있습니다.
 
@@ -113,7 +113,7 @@ docker run --rm --name manyak-notification -p 8081:8080 \
 
 ## 상관 헤더와 로그
 
-`X-Manyak-Request-Id`는 응답에 그대로 돌려주고 없거나 공백이면 `req_` 접두 UUID를 생성합니다. `X-Manyak-Session-Id`, `X-Manyak-Device-Id-Hash`는 받은 값을 MDC에 넣으며 없으면 `unknown`입니다. 서버 API 호출에는 MDC의 세 값을 전달하되 빈 값과 `unknown`은 생략합니다. 원본 기기 ID를 받거나 해시를 계산하지 않습니다.
+`X-Manyak-Request-Id`는 응답에 그대로 돌려주고 없거나 공백이면 `req_` 접두 UUID를 생성합니다. `X-Manyak-Session-Id`, `X-Manyak-Device-Id-Hash`는 받은 값을 MDC에 넣으며 없으면 `unknown`입니다. 서버 API 호출에는 MDC의 세 값을 전달하되 빈 값과 `unknown`은 생략합니다. 원본 기기 ID를 받거나 해시를 계산하지 않습니다. `X-Manyak-Device-Id-Hash`는 서버가 허용하는 `device_hash_` 접두부와 소문자 hex 16자 형식이어야 합니다.
 
 기본 로컬 로그는 사람이 읽는 형식이고 `dev`, `prod`, `jsonlog` 프로파일에서는 JSON 한 줄입니다. 요청 처리 로그에 MDC 상관 식별자를 포함합니다. 기본 INFO에서는 헬스체크 요청 로그를 남기지 않습니다. 상관 헤더 확인은 `LOGGING_LEVEL_COM_KNK_MANYAK_NOTIFICATION_GLOBAL_OBSERVABILITY=DEBUG`로 실행합니다.
 

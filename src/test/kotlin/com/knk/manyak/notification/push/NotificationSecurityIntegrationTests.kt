@@ -57,6 +57,36 @@ class NotificationSecurityIntegrationTests {
     }
 
     @Test
+    fun `MVC 표준 실패도 실제 HTTP 응답에서 공통 JSON 본문이다`() {
+        val cases = listOf(
+            Triple("GET", "application/json", 405 to "METHOD_NOT_ALLOWED"),
+            Triple("POST", "text/plain", 415 to "UNSUPPORTED_MEDIA_TYPE"),
+            Triple("POST", "application/json", 404 to "NOT_FOUND"),
+        )
+        HttpClient.newHttpClient().use { client ->
+            cases.forEach { (method, contentType, expected) ->
+                val path = if (expected.first == 404) "/internal/no-mapping" else "/internal/notifications"
+                val request = HttpRequest.newBuilder(URI("http://localhost:$port$path"))
+                    .header("X-Manyak-Internal-Secret", "test-secret")
+                    .header("Content-Type", contentType)
+                    .header("X-Manyak-Request-Id", "req-standard-error")
+                    .method(method, HttpRequest.BodyPublishers.ofString("{}"))
+                    .build()
+                val response = client.send(request, HttpResponse.BodyHandlers.ofString())
+                assertThat(response.statusCode()).isEqualTo(expected.first)
+                assertThat(response.headers().firstValue("X-Manyak-Request-Id")).hasValue("req-standard-error")
+                val body = jacksonObjectMapper().readTree(response.body())
+                assertThat(body.properties().map { it.key }).containsExactlyInAnyOrder("timestamp", "status", "code", "message", "path", "details")
+                assertThat(body["status"].asInt()).isEqualTo(expected.first)
+                assertThat(body["code"].asString()).isEqualTo(expected.second)
+                assertThat(body["path"].asString()).isEqualTo(path)
+                assertThat(body["details"].size()).isZero()
+                if (expected.first == 405) assertThat(response.headers().firstValue("Allow").orElse("")).contains("POST")
+            }
+        }
+    }
+
+    @Test
     fun `서버 URL 미설정은 발송 없이 502다`() {
         val response = send("test-secret", """{"recipientId":"00000000-0000-4000-8000-000000000001","kind":"SERVICE","type":"STORY_COMPLETED","data":{}}""")
         assertThat(response.statusCode()).isEqualTo(502)

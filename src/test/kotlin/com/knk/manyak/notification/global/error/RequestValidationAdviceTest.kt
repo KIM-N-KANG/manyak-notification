@@ -85,6 +85,63 @@ class RequestValidationAdviceTest {
         assertThat(logs.single().formattedMessage).contains("path=data.<key>")
     }
 
+    @Test
+    fun `MVC 표준 실패는 상태와 공통 본문을 유지하고 민감값 없이 한 줄 경고를 남긴다`() = captureWarnings { logs ->
+        val cases = listOf(
+            Triple(get("/validation"), 405, "METHOD_NOT_ALLOWED"),
+            Triple(post("/validation").contentType(MediaType.TEXT_PLAIN).content("token-secret"), 415, "UNSUPPORTED_MEDIA_TYPE"),
+            Triple(get("/missing-secret"), 404, "NOT_FOUND"),
+            Triple(get("/conversion").param("count", "1").accept(MediaType.IMAGE_PNG), 406, "NOT_ACCEPTABLE"),
+            Triple(get("/conversion"), 400, "BAD_REQUEST"),
+        )
+        cases.forEach { (request, code, name) ->
+            mvc.perform(request).andExpect(status().`is`(code))
+                .andExpect(jsonPath("$.status").value(code))
+                .andExpect(jsonPath("$.code").value(name))
+                .andExpect(jsonPath("$.timestamp").isNotEmpty)
+                .andExpect(jsonPath("$.path").isNotEmpty)
+                .andExpect(jsonPath("$.message").isNotEmpty)
+                .andExpect(jsonPath("$.details").isArray)
+        }
+        assertThat(logs).hasSize(cases.size)
+    }
+
+    @Test
+    fun `JSON을 제외한 Accept에서도 파싱 및 타입 검증 오류 본문을 반환한다`() {
+        mvc.perform(get("/conversion").param("count", "invalid").accept(MediaType.IMAGE_PNG))
+            .andExpect(status().isBadRequest)
+            .andExpect(jsonPath("$.code").value("BAD_REQUEST"))
+        mvc.perform(post("/validation").contentType(MediaType.APPLICATION_JSON).content("{").accept(MediaType.IMAGE_PNG))
+            .andExpect(status().isBadRequest)
+            .andExpect(jsonPath("$.code").value("BAD_REQUEST"))
+    }
+
+    @Test
+    fun `예상하지 못한 예외는 고정 500 본문과 민감값을 제거한 ERROR 스택을 남긴다`() {
+        val logger = LoggerFactory.getLogger(RequestValidationAdvice::class.java) as Logger
+        val appender = ListAppender<ILoggingEvent>().apply { start() }
+        logger.addAppender(appender)
+        try {
+            mvc.perform(get("/unexpected"))
+                .andExpect(status().isInternalServerError)
+                .andExpect(jsonPath("$.code").value("INTERNAL_SERVER_ERROR"))
+                .andExpect(jsonPath("$.message").value("서버 오류가 발생했습니다. 잠시 후 다시 시도해 주세요."))
+                .andExpect(jsonPath("$.status").value(500))
+                .andExpect(jsonPath("$.path").value("/unexpected"))
+                .andExpect(jsonPath("$.timestamp").isNotEmpty)
+                .andExpect(jsonPath("$.details").isEmpty)
+            val event = appender.list.single()
+            assertThat(event.level).isEqualTo(Level.ERROR)
+            assertThat(event.throwableProxy.stackTraceElementProxyArray).isNotEmpty
+            assertThat(ch.qos.logback.classic.spi.ThrowableProxyUtil.asString(event.throwableProxy))
+                .doesNotContain("secret", "forged")
+            assertThat(event.formattedMessage).contains("IllegalStateException").doesNotContain("secret", "forged")
+        } finally {
+            logger.detachAppender(appender)
+            appender.stop()
+        }
+    }
+
     private fun captureWarnings(assertions: (List<ILoggingEvent>) -> Unit) {
         val logger = LoggerFactory.getLogger(RequestValidationAdvice::class.java) as Logger
         val appender = ListAppender<ILoggingEvent>().apply { start() }
@@ -107,6 +164,9 @@ class RequestValidationAdviceTest {
     class TypeConversionController {
         @PostMapping("/validation")
         fun validate(@Valid @RequestBody request: NotificationRequest) = request
+
+        @GetMapping("/unexpected")
+        fun unexpected(): String = throw IllegalStateException("token-secret\r\nforged", IllegalArgumentException("other-secret"))
 
         @GetMapping("/identifier")
         fun identifier(@RequestParam id: java.util.UUID) = id
