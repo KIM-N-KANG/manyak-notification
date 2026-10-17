@@ -74,6 +74,8 @@ Android는 data-only이며 서비스 알림은 HIGH, 광고 알림은 NORMAL입�
 
 `UNREGISTERED`는 서버 삭제 API로 정리하며 삭제까지 성공하면 `unregistered`에 셉니다. 삭제 실패는 기존 서버 메트릭 관례대로 `failed`에 세고 다음 기기에 계속 보냅니다. `INVALID_ARGUMENT`는 페이로드 오류일 수 있어 삭제하지 않습니다. 동기 API는 애플리케이션 재시도를 하지 않습니다. 큐 소비는 아래 재전달 정책을 따릅니다.
 
+400 검증 실패와 내부 인증의 401·404는 `timestamp`(UTC ISO 8601), `status`, `code`, `message`, `path`, `details`를 반환합니다. 선언적 필드 검증과 요청 파라미터 타입 변환 실패의 `details`에는 `field`와 `message`를 담고, 본문 파싱 실패와 인증 실패는 빈 배열을 반환합니다. 자격 조회 실패의 502는 위 발송 결과 구조를 유지합니다.
+
 수동 요청 모음은 [http/notifications.http](http/notifications.http)에 있습니다.
 
 ## GHCR 이미지와 로컬 컨테이너
@@ -132,6 +134,8 @@ RETRY는 `push.requested.retry`에서 고정 60초 간격으로 최초 포함 �
 SDK 내부 재시도는 0회(실제 대기 0초, RetryConfig의 최소 대기 상한 500ms), FCM connect/write는 1초, read는 5초입니다. OAuth 자격 갱신의 내부 재시도도 끕니다. 기본 처리 예산의 보수적 합은 `10 + 7 + 2×40 + 3 + 4×2 = 108초`로 2분 선점보다 짧습니다(새 기기 시작 예산, 마지막 FCM 요청, OAuth connect/read 갱신 최대 두 번, 서버 정리, Redis 작업). 시간 설정의 근거는 `ConsumerTimingProperties` KDoc에 있습니다. SDK 9.10.0의 package-private builder를 작은 연결 클래스에서 사용하므로 SDK 교체 시 실제 SDK 재시도 테스트를 확인해야 합니다.
 
 처리 중 소비자가 죽으면 선점 만료 후 남은 재시도에서 새 소비자가 처리합니다. 선점은 자동 연장하지 않습니다. JVM 정지 등으로 처리 시간이 TTL을 넘으면 **유실보다 중복을 허용**하며, 이전 소유자의 완료/삭제는 소유자 비교로 차단합니다.
+
+큐 소비 결과는 처리마다 평문 INFO로 메시지 식별자, 최종 소비 결과, 발송 응답의 `reason`을 남깁니다. 완료된 메시지는 SUCCESS, 다른 소비자가 처리 중인 메시지는 RETRY로 기록하며 각각 지표의 `success`, `retry`와 대응합니다. 발송 응답이 없는 분기는 `reason=null`로 기록합니다. 예외의 WARN 로그도 유지합니다.
 
 FCM 비활성은 `FCM_DISABLED`로 DISCARD합니다. 소비 메트릭 `manyak.push.consume.result{outcome=success|retry|discard|dlq}`도 기동 시 0으로 등록합니다. 메시지의 requestId/sessionId는 MDC와 자격 조회 헤더로 전달하고 처리 후 기존 MDC를 복구합니다.
 
