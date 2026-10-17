@@ -57,6 +57,79 @@ class NotificationSecurityIntegrationTests {
     }
 
     @Test
+    fun `MVC 표준 실패도 실제 HTTP 응답에서 공통 JSON 본문이다`() {
+        val cases = listOf(
+            Triple("GET", "application/json", 405 to "METHOD_NOT_ALLOWED"),
+            Triple("POST", "text/plain", 415 to "UNSUPPORTED_MEDIA_TYPE"),
+            Triple("POST", "application/json", 404 to "NOT_FOUND"),
+        )
+        HttpClient.newHttpClient().use { client ->
+            cases.forEach { (method, contentType, expected) ->
+                val path = if (expected.first == 404) "/internal/no-mapping" else "/internal/notifications"
+                val request = HttpRequest.newBuilder(URI("http://localhost:$port$path"))
+                    .header("X-Manyak-Internal-Secret", "test-secret")
+                    .header("Content-Type", contentType)
+                    .header("X-Manyak-Request-Id", "req-standard-error")
+                    .method(method, HttpRequest.BodyPublishers.ofString("{}"))
+                    .build()
+                val response = client.send(request, HttpResponse.BodyHandlers.ofString())
+                assertThat(response.statusCode()).isEqualTo(expected.first)
+                assertThat(response.headers().firstValue("X-Manyak-Request-Id")).hasValue("req-standard-error")
+                val body = jacksonObjectMapper().readTree(response.body())
+                assertThat(body.properties().map { it.key }).containsExactlyInAnyOrder("timestamp", "status", "code", "message", "path", "details")
+                assertThat(body["status"].asInt()).isEqualTo(expected.first)
+                assertThat(body["code"].asString()).isEqualTo(expected.second)
+                assertThat(body["path"].asString()).isEqualTo(path)
+                assertThat(body["details"].size()).isZero()
+                if (expected.first == 405) assertThat(response.headers().firstValue("Allow").orElse("")).contains("POST")
+            }
+        }
+    }
+
+    @Test
+    fun `필터의 잘못된 form은 Accept와 무관하게 공통 400이다`() {
+        listOf("application/json", "image/png").forEach { accept ->
+            val response = raw("PUT", accept, "a=%ZZ")
+            assertFailure(response, 400, "BAD_REQUEST", "요청 값이 올바르지 않습니다.")
+            assertThat(response.headers().firstValue("X-Manyak-Request-Id")).hasValue("req-outside-mvc")
+        }
+    }
+
+    @Test
+    fun `컨테이너 TRACE 거절도 JSON과 상관 헤더 및 Allow를 유지한다`() {
+        listOf("application/json", "image/png").forEach { accept ->
+            val response = raw("TRACE", accept)
+            assertFailure(response, 405, "METHOD_NOT_ALLOWED", "허용되지 않은 요청 메서드입니다.")
+            assertThat(response.headers().firstValue("X-Manyak-Request-Id")).hasValue("req-outside-mvc")
+            assertThat(response.headers().firstValue("Allow").orElse("")).contains("POST").doesNotContain("TRACE")
+        }
+    }
+
+    @Test
+    fun `컨테이너 거절에 상관 ID가 없으면 생성한다`() {
+        val request = HttpRequest.newBuilder(URI("http://localhost:$port/internal/notifications"))
+            .header("X-Manyak-Internal-Secret", "test-secret")
+            .method("TRACE", HttpRequest.BodyPublishers.noBody()).build()
+        val response = HttpClient.newHttpClient().use { it.send(request, HttpResponse.BodyHandlers.ofString()) }
+        assertFailure(response, 405, "METHOD_NOT_ALLOWED", "허용되지 않은 요청 메서드입니다.")
+        assertThat(response.headers().firstValue("X-Manyak-Request-Id").orElse("")).matches("req_[0-9a-f]{32}")
+    }
+
+    @Test
+    fun `잘못된 form도 인증을 먼저 검사한다`() {
+        assertFailure(raw("PUT", "image/png", "a=%ZZ", false), 401, "UNAUTHORIZED", "유효하지 않은 인증입니다.")
+    }
+
+    private fun raw(method: String, accept: String, body: String = "", authenticated: Boolean = true): HttpResponse<String> {
+        val request = HttpRequest.newBuilder(URI("http://localhost:$port/internal/notifications"))
+            .header("Accept", accept).header("Content-Type", "application/x-www-form-urlencoded")
+            .header("X-Manyak-Request-Id", "req-outside-mvc")
+            .method(method, HttpRequest.BodyPublishers.ofString(body))
+        if (authenticated) request.header("X-Manyak-Internal-Secret", "test-secret")
+        return HttpClient.newHttpClient().use { it.send(request.build(), HttpResponse.BodyHandlers.ofString()) }
+    }
+
+    @Test
     fun `서버 URL 미설정은 발송 없이 502다`() {
         val response = send("test-secret", """{"recipientId":"00000000-0000-4000-8000-000000000001","kind":"SERVICE","type":"STORY_COMPLETED","data":{}}""")
         assertThat(response.statusCode()).isEqualTo(502)
@@ -76,7 +149,9 @@ class NotificationDisabledIntegrationTests {
         HttpClient.newHttpClient().use { client ->
             listOf(null, "arbitrary-secret").forEach { secret ->
                 val request = HttpRequest.newBuilder(URI("http://localhost:$port/internal/notifications"))
-                    .POST(HttpRequest.BodyPublishers.noBody())
+                    .header("Accept", "image/png")
+                    .header("Content-Type", "application/x-www-form-urlencoded")
+                    .PUT(HttpRequest.BodyPublishers.ofString("a=%ZZ"))
                 secret?.let { request.header("X-Manyak-Internal-Secret", it) }
                 assertFailure(client.send(request.build(), HttpResponse.BodyHandlers.ofString()), 404, "NOT_FOUND", "요청한 리소스를 찾을 수 없습니다.")
             }

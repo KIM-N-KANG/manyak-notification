@@ -8,11 +8,15 @@ import com.knk.manyak.notification.push.dto.NotificationResponse
 import com.knk.manyak.notification.push.dto.PushKind
 import org.slf4j.LoggerFactory
 import org.springframework.stereotype.Service
+import java.time.Clock
 import java.time.Duration
-import java.time.Instant
 
 @Service
-class NotificationService(private val client: PushEligibilityClient, private val sender: FcmPushSender) {
+class NotificationService(
+    private val client: PushEligibilityClient,
+    private val sender: FcmPushSender,
+    private val clock: Clock,
+) {
     private val log = LoggerFactory.getLogger(javaClass)
 
     fun send(
@@ -21,7 +25,7 @@ class NotificationService(private val client: PushEligibilityClient, private val
         onSent: (String) -> Unit = {},
         beforeSend: () -> Unit = {},
     ): NotificationResponse {
-        val now = Instant.now()
+        val now = clock.instant()
         if (request.expiresAt?.let { !it.isAfter(now) } == true) {
             return NotificationResponse(NotificationOutcome.EXPIRED, "EXPIRED")
         }
@@ -33,7 +37,7 @@ class NotificationService(private val client: PushEligibilityClient, private val
             return NotificationResponse(NotificationOutcome.FAILED, "ELIGIBILITY_UNAVAILABLE")
         }
         if (!eligibility.allowed) return NotificationResponse(NotificationOutcome.SKIPPED, eligibility.reason)
-        val sendAt = Instant.now()
+        val sendAt = clock.instant()
         if (request.expiresAt?.let { !it.isAfter(sendAt) } == true) {
             return NotificationResponse(NotificationOutcome.EXPIRED, "EXPIRED")
         }

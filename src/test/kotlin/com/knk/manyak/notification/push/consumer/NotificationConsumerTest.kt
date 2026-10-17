@@ -1,5 +1,7 @@
 package com.knk.manyak.notification.push.consumer
 
+import java.time.ZoneOffset
+import java.time.Clock
 import ch.qos.logback.classic.Level
 import ch.qos.logback.classic.Logger
 import ch.qos.logback.classic.spi.ILoggingEvent
@@ -18,11 +20,13 @@ import java.time.Instant
 import java.util.UUID
 
 class NotificationConsumerTest {
+    private val now = Instant.parse("2030-01-01T00:00:00Z")
+    private val clock = Clock.fixed(now, ZoneOffset.UTC)
     private val client = mock(PushEligibilityClient::class.java)
     private val messaging = mock(FirebaseMessaging::class.java)
     private val store = MemoryStore()
     private val registry = SimpleMeterRegistry()
-    private val consumer = NotificationConsumer(NotificationService(client, FcmPushSender(messaging, client, registry)), store, registry)
+    private val consumer = NotificationConsumer(NotificationService(client, FcmPushSender(messaging, client, registry, clock = clock), clock), store, registry)
     private val message = PushMessage("id", UUID.randomUUID(), PushKind.SERVICE, "STORY_COMPLETED", mapOf("type" to "STORY_COMPLETED"), null, "request", "session", 1)
 
     private fun allow() {

@@ -65,7 +65,7 @@ POST {{baseUrl}}/internal/notifications
 X-Manyak-Internal-Secret: {{internalSecret}}
 X-Manyak-Request-Id: req_manual_notification
 X-Manyak-Session-Id: session_manual_notification
-X-Manyak-Device-Id-Hash: hash_manual_notification
+X-Manyak-Device-Id-Hash: device_hash_0123456789abcdef
 Content-Type: application/json
 
 {
@@ -126,5 +126,86 @@ Content-Type: application/json
     client.test("본문 파싱 실패", () => {
         client.assert(response.status === 400 && response.body.code === "BAD_REQUEST", "400/BAD_REQUEST");
         client.assert(Array.isArray(response.body.details) && response.body.details.length === 0, "빈 details");
+    });
+%}
+
+### 허용되지 않은 메서드: 공통 실패 본문과 Allow 헤더
+GET {{baseUrl}}/internal/notifications
+X-Manyak-Internal-Secret: {{internalSecret}}
+
+> {%
+    client.test("405 공통 실패", () => {
+        client.assert(response.status === 405 && response.body.code === "METHOD_NOT_ALLOWED", "405/METHOD_NOT_ALLOWED");
+        client.assert(response.body.status === 405 && Array.isArray(response.body.details), "공통 본문");
+    });
+%}
+
+### 지원하지 않는 본문 형식
+POST {{baseUrl}}/internal/notifications
+X-Manyak-Internal-Secret: {{internalSecret}}
+Content-Type: text/plain
+
+{}
+
+> {%
+    client.test("415 공통 실패", () => client.assert(response.status === 415 && response.body.code === "UNSUPPORTED_MEDIA_TYPE", "415/UNSUPPORTED_MEDIA_TYPE"));
+%}
+
+### 매핑 없는 경로
+GET {{baseUrl}}/internal/no-mapping
+X-Manyak-Internal-Secret: {{internalSecret}}
+
+> {%
+    client.test("404 공통 실패", () => client.assert(response.status === 404 && response.body.code === "NOT_FOUND", "404/NOT_FOUND"));
+%}
+
+### 필터에서 거절하는 잘못된 form
+PUT {{baseUrl}}/internal/notifications
+X-Manyak-Internal-Secret: {{internalSecret}}
+X-Manyak-Request-Id: req-outside-mvc
+Content-Type: application/x-www-form-urlencoded
+Accept: application/json
+
+a=%ZZ
+
+> {%
+    client.test("공통 실패 본문", () => {
+        client.assert(response.status === 400 && response.body.code === "BAD_REQUEST", "400/BAD_REQUEST");
+        client.assert(response.body.path === "/internal/notifications" && Array.isArray(response.body.details), "공통 본문");
+        client.assert(response.headers.valueOf("X-Manyak-Request-Id") === "req-outside-mvc", "상관 ID");
+    });
+%}
+
+### JSON을 제외한 Accept의 잘못된 form
+PUT {{baseUrl}}/internal/notifications
+X-Manyak-Internal-Secret: {{internalSecret}}
+X-Manyak-Request-Id: req-outside-mvc
+Content-Type: application/x-www-form-urlencoded
+Accept: image/png
+
+a=%ZZ
+
+> {%
+    client.test("공통 실패 본문", () => {
+        client.assert(response.status === 400 && response.body.code === "BAD_REQUEST", "400/BAD_REQUEST");
+        client.assert(response.body.path === "/internal/notifications" && Array.isArray(response.body.details), "공통 본문");
+        client.assert(response.headers.valueOf("X-Manyak-Request-Id") === "req-outside-mvc", "상관 ID");
+    });
+%}
+
+### 컨테이너의 TRACE 거절
+TRACE {{baseUrl}}/internal/notifications
+X-Manyak-Internal-Secret: {{internalSecret}}
+X-Manyak-Request-Id: req-outside-mvc
+Content-Type: application/x-www-form-urlencoded
+Accept: image/png
+
+
+
+> {%
+    client.test("공통 실패 본문", () => {
+        client.assert(response.status === 405 && response.body.code === "METHOD_NOT_ALLOWED", "405/METHOD_NOT_ALLOWED");
+        client.assert(response.body.path === "/internal/notifications" && Array.isArray(response.body.details), "공통 본문");
+        client.assert(response.headers.valueOf("X-Manyak-Request-Id") === "req-outside-mvc", "상관 ID");
     });
 %}

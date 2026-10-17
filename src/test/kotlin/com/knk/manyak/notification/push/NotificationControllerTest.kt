@@ -1,5 +1,7 @@
 package com.knk.manyak.notification.push
 
+import java.time.ZoneOffset
+import java.time.Clock
 import com.google.firebase.messaging.FirebaseMessaging
 import com.google.firebase.messaging.FirebaseMessagingException
 import com.google.firebase.messaging.Message
@@ -39,6 +41,8 @@ import java.time.Instant
 import java.util.UUID
 
 class NotificationControllerTest {
+    private val now = Instant.parse("2030-01-01T00:00:00Z")
+    private val clock = Clock.fixed(now, ZoneOffset.UTC)
     private val recipient = UUID.randomUUID()
     private val builder = PushClientConfig().serverRestClientBuilder(io.micrometer.observation.ObservationRegistry.NOOP)
     private val server = MockRestServiceServer.bindTo(builder).build()
@@ -48,7 +52,7 @@ class NotificationControllerTest {
     private val mvc = controller(messaging)
 
     private fun controller(firebase: FirebaseMessaging?): MockMvc = MockMvcBuilders.standaloneSetup(
-        NotificationController(NotificationService(client, FcmPushSender(firebase, client, registry))),
+        NotificationController(NotificationService(client, FcmPushSender(firebase, client, registry, clock = clock), clock)),
     ).build()
 
     private fun body(extra: String = "") = """{"recipientId":"$recipient","kind":"SERVICE","type":"STORY_COMPLETED","data":{"title":"완성","body":"내용","recipientId":"spoofed","type":"spoofed"}$extra}"""
@@ -147,20 +151,19 @@ class NotificationControllerTest {
 
     @Test
     fun `만료는 자격 조회도 발송도 하지 않는다`() {
-        send(body(",\"expiresAt\":\"2000-01-01T00:00:00Z\""))
+        send(body(",\"expiresAt\":\"$now\""))
             .andExpect(status().isOk).andExpect(jsonPath("$.outcome").value("EXPIRED"))
         verifyNoInteractions(messaging)
     }
 
     @Test
     fun `현재 시각과 상관 헤더를 자격 API에 전달한다`() {
-        val before = Instant.now()
         MDC.put("request_id", "req-test")
         MDC.put("session_id", "session-test")
         MDC.put("device_id_hash", "hash-test")
         server.expect { request ->
             val at = Instant.parse(request.uri.query.substringAfter("at="))
-            assertThat(at).isBetween(before, Instant.now())
+            assertThat(at).isEqualTo(now)
         }.andExpect(header("X-Manyak-Internal-Secret", "test-secret"))
             .andExpect(header("X-Manyak-Request-Id", "req-test"))
             .andExpect(header("X-Manyak-Session-Id", "session-test"))
@@ -197,7 +200,7 @@ class NotificationControllerTest {
 
     @Test
     fun `광고 알림은 NORMAL이고 만료 시각을 TTL로 전달한다`() {
-        val expiresAt = Instant.now().plusSeconds(60)
+        val expiresAt = now.plusSeconds(60)
         server.expect { request -> assertThat(request.uri.query).contains("kind=MARKETING") }
             .andRespond(withSuccess("""{"allowed":true,"reason":"OK","tokens":[{"token":"token","platform":"ANDROID"}]}""", MediaType.APPLICATION_JSON))
         send(body(",\"expiresAt\":\"$expiresAt\"").replace("\"SERVICE\"", "\"MARKETING\""))
@@ -208,7 +211,7 @@ class NotificationControllerTest {
         val android = field(captor.value, "androidConfig")
         assertThat(field(android, "priority")).isEqualTo("normal")
         val seconds = (field(android, "ttl") as String).removeSuffix("s").toDouble()
-        assertThat(seconds).isGreaterThan(0.0).isLessThanOrEqualTo(60.0)
+        assertThat(seconds).isEqualTo(60.0)
     }
 
     @Test

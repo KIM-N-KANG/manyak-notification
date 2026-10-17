@@ -1,5 +1,7 @@
 package com.knk.manyak.notification.push.consumer
 
+import java.time.ZoneOffset
+import java.time.Clock
 import com.google.firebase.IncomingHttpResponse
 import com.google.firebase.messaging.*
 import com.knk.manyak.notification.global.observability.CorrelationHeaders
@@ -18,11 +20,13 @@ import java.time.Instant
 import java.util.UUID
 
 class ConsumerOutcomeTest {
+    private val now = Instant.parse("2030-01-01T00:00:00Z")
+    private val clock = Clock.fixed(now, ZoneOffset.UTC)
     private val client = mock(PushEligibilityClient::class.java)
     private val messaging = mock(FirebaseMessaging::class.java)
     private val store = NotificationConsumerTest.MemoryStore()
     private val registry = SimpleMeterRegistry()
-    private val consumer = NotificationConsumer(NotificationService(client, FcmPushSender(messaging, client, registry)), store, registry)
+    private val consumer = NotificationConsumer(NotificationService(client, FcmPushSender(messaging, client, registry, clock = clock), clock), store, registry)
     private val message = PushMessage("id", UUID.randomUUID(), PushKind.SERVICE, "STORY_COMPLETED", mapOf("type" to "STORY_COMPLETED"), null, "request", "session", 1)
     private fun allow(tokens: List<String> = listOf("a")) {
         `when`(client.getEligibility(anyValue(), anyValue(), anyValue())).thenReturn(PushEligibilityResponse(true, "OK", tokens.map { PushEligibilityToken(it, PushPlatform.ANDROID) }))
@@ -92,16 +96,15 @@ class ConsumerOutcomeTest {
         assertThat(consumer.onMessage(message)).isEqualTo(ConsumeResult.DISCARD)
         store.state = Claim.ACQUIRED
         allow()
-        val disabled = NotificationConsumer(NotificationService(client, FcmPushSender(null, client, registry)), store, registry)
+        val disabled = NotificationConsumer(NotificationService(client, FcmPushSender(null, client, registry, clock = clock), clock), store, registry)
         assertThat(disabled.onMessage(message)).isEqualTo(ConsumeResult.DISCARD)
         verifyNoInteractions(messaging)
     }
     @Test fun `메시지 상관 ID와 발송 직전 at을 전달하고 기존 MDC를 복구한다`() {
         MDC.put("request_id", "previous")
         MDC.put("device_id_hash", "unrelated")
-        val before = Instant.now()
         `when`(client.getEligibility(anyValue(), anyValue(), anyValue())).thenAnswer {
-            assertThat(it.getArgument<Instant>(2)).isBetween(before, Instant.now())
+            assertThat(it.getArgument<Instant>(2)).isEqualTo(now)
             assertThat(CorrelationHeaders.forwardingHeadersFromMdc()).containsExactlyInAnyOrderEntriesOf(mapOf("X-Manyak-Request-Id" to "request", "X-Manyak-Session-Id" to "session"))
             PushEligibilityResponse(false, "DENIED", emptyList())
         }
@@ -119,13 +122,13 @@ class ConsumerOutcomeTest {
         val failingStore = object : DeliveryStore by store {
             override fun recordSent(messageId: String, owner: String, token: String) { throw IllegalStateException("Redis unavailable") }
         }
-        val target = NotificationConsumer(NotificationService(client, FcmPushSender(messaging, client, registry)), failingStore, registry)
+        val target = NotificationConsumer(NotificationService(client, FcmPushSender(messaging, client, registry, clock = clock), clock), failingStore, registry)
         assertThat(target.onMessage(message)).isEqualTo(ConsumeResult.RETRY)
         verify(messaging, times(1)).send(any(Message::class.java))
         assertThat(store.state).isEqualTo(Claim.ACQUIRED)
     }
     @Test fun `이미 발송한 기기 조회에도 처리 시간 제한을 적용한다`() {
-        val sender = FcmPushSender(messaging, client, registry)
+        val sender = FcmPushSender(messaging, client, registry, clock = clock)
         org.assertj.core.api.Assertions.assertThatThrownBy {
             sender.sendToUser(message.recipientId, listOf(PushEligibilityToken("a", PushPlatform.ANDROID)), message.data,
                 alreadySent = { true }, beforeSend = { throw IllegalStateException("budget exhausted") })
