@@ -31,6 +31,14 @@ Content-Type: application/json
 
 > {%
     client.test("인증 거절", () => client.assert(response.status === 401, `expected=401 actual=${response.status}`));
+    client.test("공통 실패 본문", () => {
+        client.assert(response.body.code === "UNAUTHORIZED", "code");
+        client.assert(response.body.status === response.status, "status");
+        client.assert(typeof response.body.timestamp === "string" && !isNaN(Date.parse(response.body.timestamp)), "timestamp");
+        client.assert(typeof response.body.message === "string", "message");
+        client.assert(response.body.path === "/internal/notifications", "path");
+        client.assert(Array.isArray(response.body.details) && response.body.details.length === 0, "details");
+    });
 %}
 
 ### 필수 필드 누락
@@ -42,6 +50,14 @@ Content-Type: application/json
 
 > {%
     client.test("입력 거절", () => client.assert(response.status === 400, `expected=400 actual=${response.status}`));
+    client.test("공통 실패 본문", () => {
+        client.assert(response.body.code === "BAD_REQUEST", "code");
+        client.assert(response.body.status === response.status, "status");
+        client.assert(typeof response.body.timestamp === "string" && !isNaN(Date.parse(response.body.timestamp)), "timestamp");
+        client.assert(typeof response.body.message === "string", "message");
+        client.assert(response.body.path === "/internal/notifications", "path");
+        client.assert(Array.isArray(response.body.details) && response.body.details.length === 0, "details");
+    });
 %}
 
 ### 자유 발송: 회원 자격과 FCM 설정에 따른 결과 및 건수를 확인
@@ -75,4 +91,40 @@ POST {{baseUrl}}/internal/notifications
 
 > {%
     client.test("내부 API 비활성", () => client.assert(response.status === 404, `expected=404 actual=${response.status}`));
+    client.test("공통 실패 본문", () => {
+        client.assert(response.body.code === "NOT_FOUND", "code");
+        client.assert(response.body.status === response.status, "status");
+        client.assert(typeof response.body.timestamp === "string" && !isNaN(Date.parse(response.body.timestamp)), "timestamp");
+        client.assert(typeof response.body.message === "string", "message");
+        client.assert(response.body.path === "/internal/notifications", "path");
+        client.assert(Array.isArray(response.body.details) && response.body.details.length === 0, "details");
+    });
+%}
+
+### 선언적 검증 실패: details에 type 필드 오류 포함
+POST {{baseUrl}}/internal/notifications
+X-Manyak-Internal-Secret: {{internalSecret}}
+Content-Type: application/json
+
+{"recipientId":"{{recipientId}}","kind":"SERVICE","type":" ","data":{}}
+
+> {%
+    client.test("필드 검증", () => {
+        client.assert(response.status === 400 && response.body.code === "BAD_REQUEST", "400/BAD_REQUEST");
+        client.assert(response.body.details.some(detail => detail.field === "type" && detail.message), "type 오류");
+    });
+%}
+
+### 본문 파싱 실패: details는 빈 배열
+POST {{baseUrl}}/internal/notifications
+X-Manyak-Internal-Secret: {{internalSecret}}
+Content-Type: application/json
+
+{"recipientId":"invalid","kind":"SERVICE","type":"STORY_COMPLETED","data":{}}
+
+> {%
+    client.test("본문 파싱 실패", () => {
+        client.assert(response.status === 400 && response.body.code === "BAD_REQUEST", "400/BAD_REQUEST");
+        client.assert(Array.isArray(response.body.details) && response.body.details.length === 0, "빈 details");
+    });
 %}

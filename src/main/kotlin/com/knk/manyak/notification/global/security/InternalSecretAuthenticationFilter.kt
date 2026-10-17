@@ -1,5 +1,6 @@
 package com.knk.manyak.notification.global.security
 
+import com.knk.manyak.notification.global.error.ErrorResponse
 import jakarta.servlet.FilterChain
 import jakarta.servlet.http.HttpServletRequest
 import jakarta.servlet.http.HttpServletResponse
@@ -36,10 +37,10 @@ class InternalSecretAuthenticationFilter(
             response.status = status.value()
             response.contentType = MediaType.APPLICATION_JSON_VALUE
             response.characterEncoding = Charsets.UTF_8.name()
-            response.writer.write(objectMapper.writeValueAsString(mapOf(
-                "status" to status.value(), "code" to status.name,
-                "message" to if (status == HttpStatus.NOT_FOUND) "요청한 리소스를 찾을 수 없습니다." else "유효하지 않은 인증입니다.",
-                "path" to request.requestURI,
+            response.writer.write(objectMapper.writeValueAsString(ErrorResponse(
+                status = status.value(), code = status.name,
+                message = if (status == HttpStatus.NOT_FOUND) "요청한 리소스를 찾을 수 없습니다." else "유효하지 않은 인증입니다.",
+                path = request.requestURI,
             )))
             return
         }
