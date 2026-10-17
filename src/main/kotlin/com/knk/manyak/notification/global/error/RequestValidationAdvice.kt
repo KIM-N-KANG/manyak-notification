@@ -55,27 +55,31 @@ class RequestValidationAdvice {
         val mvcError = ex as? org.springframework.web.ErrorResponse
         val status = mvcError?.statusCode ?: HttpStatus.INTERNAL_SERVER_ERROR
         val httpStatus = HttpStatus.resolve(status.value()) ?: HttpStatus.INTERNAL_SERVER_ERROR
+        return statusFailure(ex, httpStatus, request.requestURI, mvcError?.headers ?: HttpHeaders())
+    }
+
+    internal fun statusFailure(ex: Throwable?, httpStatus: HttpStatus, path: String, originalHeaders: HttpHeaders = HttpHeaders()): ResponseEntity<ErrorResponse> {
         val message = when (httpStatus) {
             HttpStatus.BAD_REQUEST -> "요청 값이 올바르지 않습니다."
+            HttpStatus.UNAUTHORIZED -> "유효하지 않은 인증입니다."
             HttpStatus.NOT_FOUND -> "요청한 리소스를 찾을 수 없습니다."
             HttpStatus.METHOD_NOT_ALLOWED -> "허용되지 않은 요청 메서드입니다."
             HttpStatus.UNSUPPORTED_MEDIA_TYPE -> "지원하지 않는 요청 본문 형식입니다."
             HttpStatus.NOT_ACCEPTABLE -> "지원하지 않는 응답 형식입니다."
-            else -> if (status.is5xxServerError) "서버 오류가 발생했습니다. 잠시 후 다시 시도해 주세요." else "요청을 처리할 수 없습니다."
+            else -> if (httpStatus.is5xxServerError) "서버 오류가 발생했습니다. 잠시 후 다시 시도해 주세요." else "요청을 처리할 수 없습니다."
         }
-        if (status.is5xxServerError) {
-            // 예외 메시지와 원인에는 요청 본문·비밀값이 들어갈 수 있다. 위치와 클래스만 보존한다.
-            val safeStack = RuntimeException(ex.javaClass.name).apply { stackTrace = ex.stackTrace }
-            log.error("요청 처리 실패 (error={})", ex.javaClass.simpleName, safeStack)
-        } else {
+        if (httpStatus.is5xxServerError) {
+            log.error("요청 처리 실패 (error={})", ex?.javaClass?.simpleName ?: httpStatus.name, ex?.let(::sanitizedThrowable))
+        } else if (ex != null) {
             log.warn("요청 처리 실패 (error={}, message={})", ex.javaClass.simpleName, message)
+        } else {
+            log.debug("요청 처리 실패 (status={})", httpStatus.value())
         }
         val headers = HttpHeaders().apply {
-            mvcError?.headers?.let { putAll(it) }
-            // Accept가 JSON을 제외한 406 응답도 공통 오류 본문을 직렬화한다.
+            putAll(originalHeaders)
             contentType = MediaType.APPLICATION_JSON
         }
-        return ResponseEntity(ErrorResponse(status.value(), httpStatus.name, message, request.requestURI), headers, status)
+        return ResponseEntity(ErrorResponse(httpStatus.value(), httpStatus.name, message, path), headers, httpStatus)
     }
 
     private fun badRequest(

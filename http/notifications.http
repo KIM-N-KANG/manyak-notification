@@ -158,3 +158,54 @@ X-Manyak-Internal-Secret: {{internalSecret}}
 > {%
     client.test("404 공통 실패", () => client.assert(response.status === 404 && response.body.code === "NOT_FOUND", "404/NOT_FOUND"));
 %}
+
+### 필터에서 거절하는 잘못된 form
+PUT {{baseUrl}}/internal/notifications
+X-Manyak-Internal-Secret: {{internalSecret}}
+X-Manyak-Request-Id: req-outside-mvc
+Content-Type: application/x-www-form-urlencoded
+Accept: application/json
+
+a=%ZZ
+
+> {%
+    client.test("공통 실패 본문", () => {
+        client.assert(response.status === 400 && response.body.code === "BAD_REQUEST", "400/BAD_REQUEST");
+        client.assert(response.body.path === "/internal/notifications" && Array.isArray(response.body.details), "공통 본문");
+        client.assert(response.headers.valueOf("X-Manyak-Request-Id") === "req-outside-mvc", "상관 ID");
+    });
+%}
+
+### JSON을 제외한 Accept의 잘못된 form
+PUT {{baseUrl}}/internal/notifications
+X-Manyak-Internal-Secret: {{internalSecret}}
+X-Manyak-Request-Id: req-outside-mvc
+Content-Type: application/x-www-form-urlencoded
+Accept: image/png
+
+a=%ZZ
+
+> {%
+    client.test("공통 실패 본문", () => {
+        client.assert(response.status === 400 && response.body.code === "BAD_REQUEST", "400/BAD_REQUEST");
+        client.assert(response.body.path === "/internal/notifications" && Array.isArray(response.body.details), "공통 본문");
+        client.assert(response.headers.valueOf("X-Manyak-Request-Id") === "req-outside-mvc", "상관 ID");
+    });
+%}
+
+### 컨테이너의 TRACE 거절
+TRACE {{baseUrl}}/internal/notifications
+X-Manyak-Internal-Secret: {{internalSecret}}
+X-Manyak-Request-Id: req-outside-mvc
+Content-Type: application/x-www-form-urlencoded
+Accept: image/png
+
+
+
+> {%
+    client.test("공통 실패 본문", () => {
+        client.assert(response.status === 405 && response.body.code === "METHOD_NOT_ALLOWED", "405/METHOD_NOT_ALLOWED");
+        client.assert(response.body.path === "/internal/notifications" && Array.isArray(response.body.details), "공통 본문");
+        client.assert(response.headers.valueOf("X-Manyak-Request-Id") === "req-outside-mvc", "상관 ID");
+    });
+%}

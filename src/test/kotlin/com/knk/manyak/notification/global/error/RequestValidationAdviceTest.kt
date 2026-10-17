@@ -131,6 +131,9 @@ class RequestValidationAdviceTest {
                 .andExpect(jsonPath("$.timestamp").isNotEmpty)
                 .andExpect(jsonPath("$.details").isEmpty)
             val event = appender.list.single()
+            assertThat(event.throwableProxy.cause.message).isEqualTo(IllegalArgumentException::class.java.name)
+            assertThat(event.throwableProxy.cause.stackTraceElementProxyArray.map { it.stackTraceElement })
+                .containsExactly(*event.throwableProxy.stackTraceElementProxyArray.map { it.stackTraceElement }.toTypedArray())
             assertThat(event.level).isEqualTo(Level.ERROR)
             assertThat(event.throwableProxy.stackTraceElementProxyArray).isNotEmpty
             assertThat(ch.qos.logback.classic.spi.ThrowableProxyUtil.asString(event.throwableProxy))
@@ -140,6 +143,50 @@ class RequestValidationAdviceTest {
             logger.detachAppender(appender)
             appender.stop()
         }
+    }
+
+    @Test
+    fun `같은 래퍼의 서로 다른 원인과 suppressed 발생 위치를 메시지 없이 보존한다`() {
+        val logger = LoggerFactory.getLogger(RequestValidationAdvice::class.java) as Logger
+        val appender = ListAppender<ILoggingEvent>().apply { start() }
+        logger.addAppender(appender)
+        try {
+            listOf(java.net.ConnectException("connect-secret"), java.net.SocketTimeoutException("timeout-secret")).forEach { cause ->
+                cause.stackTrace = arrayOf(StackTraceElement("Origin", "connect", "Origin.kt", 42))
+                val outer = IllegalStateException("outer-secret", cause)
+                outer.addSuppressed(IllegalArgumentException("suppressed-secret").apply {
+                    stackTrace = arrayOf(StackTraceElement("Cleanup", "close", "Cleanup.kt", 17))
+                })
+                RequestValidationAdvice().failure(outer, org.springframework.mock.web.MockHttpServletRequest())
+            }
+            val proxies = appender.list.map { it.throwableProxy }
+            assertThat(proxies.map { it.cause.message }).containsExactly("java.net.ConnectException", "java.net.SocketTimeoutException")
+            proxies.forEach {
+                assertThat(it.cause.stackTraceElementProxyArray.single().stackTraceElement.lineNumber).isEqualTo(42)
+                assertThat(it.suppressed.single().message).isEqualTo("java.lang.IllegalArgumentException")
+                assertThat(it.suppressed.single().stackTraceElementProxyArray.single().stackTraceElement.lineNumber).isEqualTo(17)
+                assertThat(ch.qos.logback.classic.spi.ThrowableProxyUtil.asString(it)).doesNotContain("secret")
+            }
+        } finally {
+            logger.detachAppender(appender)
+            appender.stop()
+        }
+    }
+
+    @Test
+    fun `예외 그래프의 순환과 깊이 및 suppressed 수를 제한한다`() {
+        val first = IllegalStateException("first-secret")
+        val second = IllegalArgumentException("second-secret", first)
+        first.initCause(second)
+        first.addSuppressed(second)
+        val cycle = sanitizedThrowable(first)
+        assertThat(cycle.cause!!.cause!!.message).isEqualTo("[exception graph truncated]")
+        assertThat(cycle.suppressed.single().message).isEqualTo("[exception graph truncated]")
+        var deep: Throwable = IllegalStateException("secret")
+        repeat(100) { deep = IllegalStateException("secret", deep) }
+        assertThat(generateSequence(sanitizedThrowable(deep)) { it.cause }.count()).isEqualTo(17)
+        val wide = IllegalStateException("secret").apply { repeat(100) { addSuppressed(IllegalArgumentException("secret")) } }
+        assertThat(sanitizedThrowable(wide).suppressed).hasSize(16)
     }
 
     private fun captureWarnings(assertions: (List<ILoggingEvent>) -> Unit) {

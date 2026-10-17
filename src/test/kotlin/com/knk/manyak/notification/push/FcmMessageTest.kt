@@ -1,5 +1,8 @@
 package com.knk.manyak.notification.push
 
+import java.time.ZoneOffset
+import java.time.Clock
+import java.time.Instant
 import com.google.firebase.messaging.AndroidConfig
 import com.google.firebase.messaging.FirebaseMessaging
 import com.google.firebase.messaging.Message
@@ -17,10 +20,12 @@ import org.mockito.Mockito.verify
 import java.util.UUID
 
 class FcmMessageTest {
+    private val now = Instant.parse("2030-01-01T00:00:00Z")
+    private val clock = Clock.fixed(now, ZoneOffset.UTC)
     private val messaging = mock(FirebaseMessaging::class.java)
     private val client = mock(PushEligibilityClient::class.java)
     private val registry = SimpleMeterRegistry()
-    private val sender = FcmPushSender(messaging, client, registry)
+    private val sender = FcmPushSender(messaging, client, registry, clock = clock)
     private val publicId = UUID.randomUUID()
 
     @Test
@@ -47,7 +52,7 @@ class FcmMessageTest {
                 if (fail) throw IllegalStateException("SDK failure")
                 "sent"
             }.`when`(sdk).send(org.mockito.ArgumentMatchers.any(Message::class.java))
-            FcmPushSender(sdk, client, registry, observationRegistry = observations).sendToUser(
+            FcmPushSender(sdk, client, registry, clock = clock, observationRegistry = observations).sendToUser(
                 publicId, listOf(PushEligibilityToken("test-token", PushPlatform.ANDROID)), mapOf("title" to "제목"))
             assertThat(started).hasSize(1)
             assertThat(stopped).containsExactly(started.single())

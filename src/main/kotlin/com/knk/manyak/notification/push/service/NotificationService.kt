@@ -15,7 +15,7 @@ import java.time.Duration
 class NotificationService(
     private val client: PushEligibilityClient,
     private val sender: FcmPushSender,
-    private val clock: Clock = Clock.systemUTC(),
+    private val clock: Clock,
 ) {
     private val log = LoggerFactory.getLogger(javaClass)
 

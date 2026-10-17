@@ -35,7 +35,7 @@ class FcmPushSender(
     @Value("\${manyak.push.web-base-url:https://manyak.app}")
     private val webBaseUrl: String = "https://manyak.app",
     private val observationRegistry: ObservationRegistry = ObservationRegistry.NOOP,
-    private val clock: Clock = Clock.systemUTC(),
+    private val clock: Clock,
 ) {
     private val log = LoggerFactory.getLogger(javaClass)
 

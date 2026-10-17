@@ -1,5 +1,8 @@
 package com.knk.manyak.notification.push.consumer
 
+import java.time.ZoneOffset
+import java.time.Clock
+import java.time.Instant
 import com.google.firebase.messaging.FirebaseMessaging
 import com.google.firebase.messaging.Message
 import com.knk.manyak.notification.push.client.PushEligibilityClient
@@ -19,6 +22,8 @@ import tools.jackson.module.kotlin.jacksonObjectMapper
 import java.util.UUID
 
 class ModerationPushTest {
+    private val now = Instant.parse("2030-01-01T00:00:00Z")
+    private val clock = Clock.fixed(now, ZoneOffset.UTC)
     private val recipientId = UUID.randomUUID()
 
     // 서버 ModerationPushListeners.pushData와 동일한 계약. storyId 없는 CREATE와 있는 UPDATE 모두 검증한다.
@@ -65,7 +70,7 @@ class ModerationPushTest {
         val client = mock(PushEligibilityClient::class.java)
         val registry = SimpleMeterRegistry()
         val store = NotificationConsumerTest.MemoryStore()
-        val consumer = NotificationConsumer(NotificationService(client, FcmPushSender(messaging, client, registry)), store, registry)
+        val consumer = NotificationConsumer(NotificationService(client, FcmPushSender(messaging, client, registry, clock = clock), clock), store, registry)
         val mapper = jacksonObjectMapper()
         val listener = SqsNotificationListener(mapper, consumer, "https://sqs.ap-northeast-2.amazonaws.com/123456789012/push")
         val message = message(status, hasStory)
