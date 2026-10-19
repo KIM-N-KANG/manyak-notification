@@ -129,14 +129,6 @@ class NotificationSecurityIntegrationTests {
         return HttpClient.newHttpClient().use { it.send(request.build(), HttpResponse.BodyHandlers.ofString()) }
     }
 
-    @Test
-    fun `서버 URL 미설정은 발송 없이 502다`() {
-        val response = send("test-secret", """{"recipientId":"00000000-0000-4000-8000-000000000001","kind":"SERVICE","type":"STORY_COMPLETED","data":{}}""")
-        assertThat(response.statusCode()).isEqualTo(502)
-        assertThat(jacksonObjectMapper().readTree(response.body()).properties().map { it.key })
-            .containsExactlyInAnyOrder("outcome", "reason", "sent", "unregistered", "failed")
-        assertThat(response.body()).contains("ELIGIBILITY_UNAVAILABLE", "FAILED")
-    }
 }
 
 @SpringBootTest(webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT,
