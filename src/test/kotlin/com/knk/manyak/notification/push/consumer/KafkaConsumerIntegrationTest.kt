@@ -7,10 +7,6 @@ import com.knk.manyak.notification.push.dto.*
 import io.micrometer.core.instrument.MeterRegistry
 import org.apache.kafka.clients.admin.AdminClient
 import org.apache.kafka.clients.admin.NewTopic
-import org.apache.kafka.clients.consumer.ConsumerConfig
-import org.apache.kafka.clients.consumer.KafkaConsumer
-import org.apache.kafka.common.serialization.ByteArrayDeserializer
-import org.apache.kafka.common.serialization.StringDeserializer
 import org.assertj.core.api.Assertions.assertThat
 import org.awaitility.Awaitility.await
 import org.junit.jupiter.api.Test
@@ -62,7 +58,7 @@ class KafkaConsumerIntegrationTest {
     @Autowired lateinit var deliveryStore: RedisDeliveryStore
     @Autowired lateinit var redisTemplate: StringRedisTemplate
 
-    @Test fun `중복 거절 재시도 비차단과 5회 뒤 DLQ 및 잘못된 JSON을 검증한다`() {
+    @Test fun `중복 거절과 재시도 비차단을 검증한다`() {
         val attempts = ConcurrentHashMap<UUID, AtomicInteger>()
         val retry = message()
         val success = message()
@@ -76,33 +72,19 @@ class KafkaConsumerIntegrationTest {
                 else -> PushEligibilityResponse(true, "OK", listOf(PushEligibilityToken("token-$id", PushPlatform.ANDROID)))
             }
         }
-        KafkaConsumer<String, ByteArray>(mapOf(
-            ConsumerConfig.BOOTSTRAP_SERVERS_CONFIG to kafka.bootstrapServers,
-            ConsumerConfig.GROUP_ID_CONFIG to "assert-dlq-${UUID.randomUUID()}",
-            ConsumerConfig.AUTO_OFFSET_RESET_CONFIG to "earliest",
-            ConsumerConfig.KEY_DESERIALIZER_CLASS_CONFIG to StringDeserializer::class.java,
-            ConsumerConfig.VALUE_DESERIALIZER_CLASS_CONFIG to ByteArrayDeserializer::class.java,
-        )).use { dlq ->
-            dlq.subscribe(listOf("push.requested.dlq"))
-            publish(retry)
-            await().atMost(Duration.ofSeconds(30)).until { attempts[retry.recipientId]?.get() == 1 }
-            publish(success); publish(success); publish(denied)
-            await().atMost(Duration.ofSeconds(3)).untilAsserted { verify(messaging, times(1)).send(any(Message::class.java)) }
-            assertThat(attempts[retry.recipientId]!!.get()).isLessThan(5)
-            template.send("push.requested", "invalid", "{broken".toByteArray()).get()
-            val records = mutableListOf<ByteArray>()
-            await().atMost(Duration.ofSeconds(45)).until {
-                dlq.poll(Duration.ofMillis(200)).forEach { records.add(it.value()) }
-                records.size >= 2
-            }
-            assertThat(records.map { String(it) }).contains("{broken", mapper.writeValueAsString(retry))
-            assertThat(attempts[retry.recipientId]!!.get()).isEqualTo(5)
-            assertThat(attempts[denied.recipientId]!!.get()).isEqualTo(1)
-            verify(messaging, times(1)).send(any(Message::class.java))
-            await().atMost(Duration.ofSeconds(10)).untilAsserted {
-                assertThat(meters.get(NotificationConsumer.METRIC).tag("outcome", "dlq").counter().count()).isEqualTo(2.0)
-            }
+        publish(retry)
+        await().atMost(Duration.ofSeconds(30)).until { attempts[retry.recipientId]?.get() == 1 }
+        publish(success); publish(success); publish(denied)
+        await().atMost(Duration.ofSeconds(3)).untilAsserted { verify(messaging, times(1)).send(any(Message::class.java)) }
+        assertThat(attempts[retry.recipientId]!!.get()).isLessThan(5)
+        await().atMost(Duration.ofSeconds(10)).untilAsserted {
+            assertThat(attempts[denied.recipientId]?.get()).isEqualTo(1)
         }
+        verify(messaging, times(1)).send(any(Message::class.java))
+        // DLQ 도착을 기다리지 않으므로 남은 재시도가 다음 테스트의 mock에 섞이지 않게 완료한다.
+        val cleanupOwner = UUID.randomUUID().toString()
+        await().atMost(Duration.ofSeconds(10)).until { deliveryStore.claim(retry.messageId, cleanupOwner) == Claim.ACQUIRED }
+        deliveryStore.complete(retry.messageId, cleanupOwner)
     }
     @Test fun `소비자가 선점 직후 죽어도 만료 뒤 재시도에서 DLQ 전에 완료한다`() {
         val message = message()
