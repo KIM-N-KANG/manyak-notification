@@ -38,6 +38,9 @@ class RedisDeliveryStoreTest {
     @Test fun `완료와 토큰 해시는 7일 보존하고 원본 토큰은 저장하지 않는다`() {
         store.claim("id", "owner")
         store.recordSent("id", "owner", "secret-token")
+        store.recordSent("id", "owner", "secret-token")
+        assertThat(store.sentCount("id")).isEqualTo(1)
+        assertThat(store.sentCount("missing")).isZero()
         store.complete("id", "owner")
         assertThat(store.claim("id", "other")).isEqualTo(Claim.DONE)
         assertThat(template.opsForSet().members(RedisDeliveryStore.sentKey("id"))).containsExactly(RedisDeliveryStore.hash("secret-token"))

@@ -18,8 +18,8 @@ data class PushMessage(
 ) {
     fun validate() {
         require(schemaVersion == 1 && messageId.isNotBlank() && requestId.isNotBlank() && sessionId.isNotBlank())
-        require(type in setOf("STORY_COMPLETED", "STORY_MODERATION_COMPLETED", "ATTENDANCE_REMINDER", "PROMOTION") && data["type"] == type)
-        require(kind == if (type in setOf("STORY_COMPLETED", "STORY_MODERATION_COMPLETED")) PushKind.SERVICE else PushKind.MARKETING)
+        require(type in setOf("STORY_COMPLETED", "STORY_MODERATION_COMPLETED", "NOTICE", "ATTENDANCE_REMINDER", "PROMOTION") && data["type"] == type)
+        require(kind == if (type in setOf("STORY_COMPLETED", "STORY_MODERATION_COMPLETED", "NOTICE")) PushKind.SERVICE else PushKind.MARKETING)
     }
 
     fun request() = NotificationRequest(recipientId, kind, type, data, expiresAt)
@@ -32,6 +32,7 @@ interface DeliveryStore {
     fun claim(messageId: String, owner: String): Claim
     fun complete(messageId: String, owner: String)
     fun release(messageId: String, owner: String)
+    fun sentCount(messageId: String): Int
     fun wasSent(messageId: String, token: String): Boolean
     fun recordSent(messageId: String, owner: String, token: String)
 }
