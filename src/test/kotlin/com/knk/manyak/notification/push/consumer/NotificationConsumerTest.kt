@@ -9,6 +9,7 @@ import ch.qos.logback.core.read.ListAppender
 import org.slf4j.LoggerFactory
 import com.google.firebase.messaging.FirebaseMessaging
 import com.google.firebase.messaging.Message
+import com.knk.manyak.notification.push.client.PushDeliveryClient
 import com.knk.manyak.notification.push.client.PushEligibilityClient
 import com.knk.manyak.notification.push.dto.*
 import com.knk.manyak.notification.push.service.*
@@ -26,7 +27,7 @@ class NotificationConsumerTest {
     private val messaging = mock(FirebaseMessaging::class.java)
     private val store = MemoryStore()
     private val registry = SimpleMeterRegistry()
-    private val consumer = NotificationConsumer(NotificationService(client, FcmPushSender(messaging, client, registry, clock = clock), clock), store, registry)
+    private val consumer = NotificationConsumer(NotificationService(client, FcmPushSender(messaging, client, registry, clock = clock), clock), store, registry, mock(PushDeliveryClient::class.java), clock)
     private val message = PushMessage("id", UUID.randomUUID(), PushKind.SERVICE, "STORY_COMPLETED", mapOf("type" to "STORY_COMPLETED"), null, "request", "session", 1)
 
     private fun allow() {
@@ -90,6 +91,7 @@ class NotificationConsumerTest {
         override fun claim(messageId: String, owner: String): Claim = state.also { if (it == Claim.ACQUIRED) state = Claim.BUSY }
         override fun complete(messageId: String, owner: String) { state = Claim.DONE }
         override fun release(messageId: String, owner: String) { state = Claim.ACQUIRED }
+        override fun sentCount(messageId: String) = sent.size
         override fun wasSent(messageId: String, token: String) = token in sent
         override fun recordSent(messageId: String, owner: String, token: String) { sent.add(token) }
     }

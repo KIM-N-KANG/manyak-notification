@@ -5,6 +5,7 @@ import java.time.Clock
 import com.google.firebase.IncomingHttpResponse
 import com.google.firebase.messaging.*
 import com.knk.manyak.notification.global.observability.CorrelationHeaders
+import com.knk.manyak.notification.push.client.PushDeliveryClient
 import com.knk.manyak.notification.push.client.PushEligibilityClient
 import com.knk.manyak.notification.push.dto.*
 import com.knk.manyak.notification.push.service.*
@@ -26,7 +27,7 @@ class ConsumerOutcomeTest {
     private val messaging = mock(FirebaseMessaging::class.java)
     private val store = NotificationConsumerTest.MemoryStore()
     private val registry = SimpleMeterRegistry()
-    private val consumer = NotificationConsumer(NotificationService(client, FcmPushSender(messaging, client, registry, clock = clock), clock), store, registry)
+    private val consumer = NotificationConsumer(NotificationService(client, FcmPushSender(messaging, client, registry, clock = clock), clock), store, registry, mock(PushDeliveryClient::class.java), clock)
     private val message = PushMessage("id", UUID.randomUUID(), PushKind.SERVICE, "STORY_COMPLETED", mapOf("type" to "STORY_COMPLETED"), null, "request", "session", 1)
     private fun allow(tokens: List<String> = listOf("a")) {
         `when`(client.getEligibility(anyValue(), anyValue(), anyValue())).thenReturn(PushEligibilityResponse(true, "OK", tokens.map { PushEligibilityToken(it, PushPlatform.ANDROID) }))
@@ -96,7 +97,7 @@ class ConsumerOutcomeTest {
         assertThat(consumer.onMessage(message)).isEqualTo(ConsumeResult.DISCARD)
         store.state = Claim.ACQUIRED
         allow()
-        val disabled = NotificationConsumer(NotificationService(client, FcmPushSender(null, client, registry, clock = clock), clock), store, registry)
+        val disabled = NotificationConsumer(NotificationService(client, FcmPushSender(null, client, registry, clock = clock), clock), store, registry, mock(PushDeliveryClient::class.java), clock)
         assertThat(disabled.onMessage(message)).isEqualTo(ConsumeResult.DISCARD)
         verifyNoInteractions(messaging)
     }
@@ -122,7 +123,7 @@ class ConsumerOutcomeTest {
         val failingStore = object : DeliveryStore by store {
             override fun recordSent(messageId: String, owner: String, token: String) { throw IllegalStateException("Redis unavailable") }
         }
-        val target = NotificationConsumer(NotificationService(client, FcmPushSender(messaging, client, registry, clock = clock), clock), failingStore, registry)
+        val target = NotificationConsumer(NotificationService(client, FcmPushSender(messaging, client, registry, clock = clock), clock), failingStore, registry, mock(PushDeliveryClient::class.java), clock)
         assertThat(target.onMessage(message)).isEqualTo(ConsumeResult.RETRY)
         verify(messaging, times(1)).send(any(Message::class.java))
         assertThat(store.state).isEqualTo(Claim.ACQUIRED)
