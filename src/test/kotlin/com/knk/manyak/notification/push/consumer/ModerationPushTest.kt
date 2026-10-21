@@ -5,6 +5,7 @@ import java.time.Clock
 import java.time.Instant
 import com.google.firebase.messaging.FirebaseMessaging
 import com.google.firebase.messaging.Message
+import com.knk.manyak.notification.push.client.PushDeliveryClient
 import com.knk.manyak.notification.push.client.PushEligibilityClient
 import com.knk.manyak.notification.push.dto.*
 import com.knk.manyak.notification.push.service.FcmPushSender
@@ -40,6 +41,52 @@ class ModerationPushTest {
             "STORY_MODERATION_COMPLETED", data, null, "request", "session", 1)
     }
 
+    @org.junit.jupiter.params.ParameterizedTest
+    @org.junit.jupiter.params.provider.CsvSource("NOTICE,SERVICE,noticeId,notices,high", "PROMOTION,MARKETING,noticeId,notices,normal", "PROMOTION,MARKETING,storyId,stories,normal")
+    fun `공지와 스토리 캠페인 데이터 및 플랫폼별 딥링크를 보존한다`(
+        type: String, kind: PushKind, targetKey: String, path: String, priority: String,
+    ) {
+        val recipient = UUID.randomUUID()
+        val target = UUID.randomUUID().toString()
+        val data = mapOf("type" to type, "campaignId" to UUID.randomUUID().toString(), targetKey to target,
+            "title" to if (kind == PushKind.SERVICE) "공지" else "(광고) 소식", "body" to "본문",
+            "deepLink" to "https://manyak.app/$path/$target")
+        val message = PushMessage("campaign-message", recipient, kind, type, data, null, "unknown", "unknown", 1)
+        message.validate()
+        val client = mock(PushEligibilityClient::class.java)
+        val messaging = mock(FirebaseMessaging::class.java)
+        val registry = SimpleMeterRegistry()
+        val clock = Clock.fixed(Instant.parse("2030-01-01T00:00:00Z"), ZoneOffset.UTC)
+        `when`(client.getEligibility(anyValue(), anyValue(), anyValue())).thenReturn(PushEligibilityResponse(true, "OK",
+            listOf(PushEligibilityToken("android", PushPlatform.ANDROID), PushEligibilityToken("web", PushPlatform.WEB))))
+        NotificationService(client, FcmPushSender(messaging, client, registry, clock = clock), clock).send(message.request())
+        verify(client).getEligibility(recipient, kind, clock.instant())
+        val captor = org.mockito.ArgumentCaptor.forClass(Message::class.java)
+        verify(messaging, times(2)).send(captor.capture())
+        fun field(value: Any, name: String): Any? = value.javaClass.getDeclaredField(name).also { it.isAccessible = true }.get(value)
+        captor.allValues.forEach {
+            @Suppress("UNCHECKED_CAST")
+            val payload = field(it, "data") as Map<String, String>
+            assertThat(payload).containsAllEntriesOf(data).containsEntry("recipientId", recipient.toString())
+        }
+        val android = captor.allValues.first()
+        assertThat(field(android, "notification")).isNull()
+        assertThat(field(field(android, "androidConfig")!!, "priority")).isEqualTo(priority)
+        val web = field(captor.allValues.last(), "webpushConfig")!!
+        assertThat(field(field(web, "fcmOptions")!!, "link")).isEqualTo(data["deepLink"])
+        val notification = field(web, "notification") as Map<*, *>
+        assertThat(notification["title"]).isEqualTo(data["title"])
+        assertThat(notification["body"]).isEqualTo(data["body"])
+    }
+
+    @Test fun `정보성 공지는 SERVICE만 허용한다`() {
+        val message = PushMessage("notice:id:member", UUID.randomUUID(), PushKind.SERVICE, "NOTICE",
+            mapOf("type" to "NOTICE"), null, "unknown", "unknown", 1)
+        message.validate()
+        org.assertj.core.api.Assertions.assertThatThrownBy { message.copy(kind = PushKind.MARKETING).validate() }
+            .isInstanceOf(IllegalArgumentException::class.java)
+    }
+
     @Test fun `검수 완료는 SERVICE로 검증을 통과한다`() {
         assertThatCode { message().validate() }.doesNotThrowAnyException()
     }
@@ -70,7 +117,7 @@ class ModerationPushTest {
         val client = mock(PushEligibilityClient::class.java)
         val registry = SimpleMeterRegistry()
         val store = NotificationConsumerTest.MemoryStore()
-        val consumer = NotificationConsumer(NotificationService(client, FcmPushSender(messaging, client, registry, clock = clock), clock), store, registry)
+        val consumer = NotificationConsumer(NotificationService(client, FcmPushSender(messaging, client, registry, clock = clock), clock), store, registry, mock(PushDeliveryClient::class.java), clock)
         val mapper = jacksonObjectMapper()
         val listener = SqsNotificationListener(mapper, consumer, "https://sqs.ap-northeast-2.amazonaws.com/123456789012/push")
         val message = message(status, hasStory)
