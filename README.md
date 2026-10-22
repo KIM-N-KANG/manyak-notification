@@ -16,7 +16,7 @@ Firebase 서비스 계정은 앱과 웹이 사용하는 Firebase 프로젝트에
 
 ## 로컬 실행
 
-Java 21을 설치하고 위 세 환경변수를 주입합니다. 서버는 `DELETE /internal/push-tokens`를 지원하는 버전이어야 합니다. 연결은 1초, 읽기는 2초에 타임아웃됩니다.
+Java 21을 설치하고 위 세 환경변수를 주입합니다. 서버는 자격 조회, `DELETE /internal/push-tokens`, `POST /internal/push-deliveries`를 지원하는 버전이어야 합니다. 연결은 1초, 읽기는 2초에 타임아웃됩니다.
 
 ```sh
 export MANYAK_SERVER_INTERNAL_BASE_URL=http://localhost:8080
@@ -123,7 +123,7 @@ docker run --rm --name manyak-notification -p 8081:8080 \
 
 `SPRING_PROFILES_ACTIVE=local`에서 `push.requested`를 그룹 `notification`으로 소비합니다. `SPRING_KAFKA_BOOTSTRAP_SERVERS` 기본값은 `localhost:9092`, Redis는 `SPRING_DATA_REDIS_HOST`/`SPRING_DATA_REDIS_PORT`로 설정합니다. compose는 각각 `kafka:19092`, `redis:6379`를 주입합니다. 토픽 세 개는 infra의 `kafka-init`이 생성해야 하며 자동 생성하지 않습니다.
 
-`messageId`, UUID `recipientId`, `kind`, `type`, 문자열 맵 `data`, `requestId`, `sessionId`, `schemaVersion: 1`이 필수이고 `expiresAt`은 선택입니다. `data.type`은 최상위 `type`과 일치해야 합니다. `STORY_COMPLETED`와 `STORY_MODERATION_COMPLETED`는 SERVICE, `ATTENDANCE_REMINDER`와 `PROMOTION`은 MARKETING입니다. 검수 완료는 `story-moderation:{submissionId}:{attempt}`로 회차를 구분하며, data의 `submissionId`·`status`·선택적 `storyId`·`deepLink`를 그대로 전달합니다. 서버 local 발송과 같이 Android는 HIGH·data-only·TTL 미지정이며, 검수 완료의 웹 제목·본문은 data에 있을 때만 사용하고 별도 문구를 만들지 않습니다. 메시지에 동의나 토큰을 저장하지 않고 매 처리마다 서버 자격을 재조회합니다.
+`messageId`, UUID `recipientId`, `kind`, `type`, 문자열 맵 `data`, `requestId`, `sessionId`, `schemaVersion: 1`이 필수이고 `expiresAt`은 선택입니다. `data.type`은 최상위 `type`과 일치해야 합니다. `STORY_COMPLETED`, `STORY_MODERATION_COMPLETED`, `NOTICE`는 SERVICE, `ATTENDANCE_REMINDER`와 `PROMOTION`은 MARKETING입니다. 검수 완료는 `story-moderation:{submissionId}:{attempt}`로 회차를 구분하며, data의 `submissionId`·`status`·선택적 `storyId`·`deepLink`를 그대로 전달합니다. 서버 local 발송과 같이 Android는 HIGH·data-only·TTL 미지정이며, 검수 완료의 웹 제목·본문은 data에 있을 때만 사용하고 별도 문구를 만들지 않습니다. 메시지에 동의나 토큰을 저장하지 않고 매 처리마다 서버 자격을 재조회합니다.
 
 완료·폐기는 `notification:processed:{messageId}`에 7일 기록합니다. 처리 중 키는 SET NX와 기본 2분 TTL로 선점하고 RETRY 때 해제합니다. 기본 10초의 처리 예산이 지나면 새 기기 발송을 시작하지 않고 다음 전달에서 이어갑니다. 성공 기기의 SHA-256 토큰 해시는 `notification:sent:{messageId}`에 7일 보존하여 재전달 때 제외합니다. Redis 기록 실패 시 재시도하며, FCM 성공과 Redis 기록 사이 장애는 중복 발송 가능성이 있습니다.
 
@@ -131,7 +131,7 @@ RETRY는 `push.requested.retry`에서 고정 60초 간격으로 최초 포함 �
 
 `MANYAK_PUSH_CONSUMER_PROCESSING_TTL_MS`(기본 120000)는 `(retry-attempts - 1) × retry-delay-ms`보다 반드시 짧아야 합니다. `MANYAK_PUSH_CONSUMER_PROCESSING_BUDGET_MS`(기본 10000)는 양수이고 TTL보다 짧아야 합니다. 시도 횟수가 2 미만이거나 간격이 양수가 아니거나 이 조건을 위반하면 기동에 실패합니다. 재시도 간격을 축소한 테스트에서는 TTL과 처리 예산도 함께 축소해야 합니다. 예를 들어 FCM/API를 mock한 자동 테스트는 간격 1000ms, TTL 2500ms, 예산 100ms를 사용합니다. 실제 FCM 환경에서는 아래 네트워크 예산도 고려해야 합니다.
 
-SDK 내부 재시도는 0회(실제 대기 0초, RetryConfig의 최소 대기 상한 500ms), FCM connect/write는 1초, read는 5초입니다. OAuth 자격 갱신의 내부 재시도도 끕니다. 기본 처리 예산의 보수적 합은 `10 + 7 + 2×40 + 3 + 4×2 = 108초`로 2분 선점보다 짧습니다(새 기기 시작 예산, 마지막 FCM 요청, OAuth connect/read 갱신 최대 두 번, 서버 정리, Redis 작업). 시간 설정의 근거는 `ConsumerTimingProperties` KDoc에 있습니다. SDK 9.10.0의 package-private builder를 작은 연결 클래스에서 사용하므로 SDK 교체 시 실제 SDK 재시도 테스트를 확인해야 합니다.
+SDK 내부 재시도는 0회(실제 대기 0초, RetryConfig의 최소 대기 상한 500ms), FCM connect/write는 1초, read는 5초입니다. OAuth 자격 갱신의 내부 재시도도 끕니다. 기본 처리 예산의 보수적 합은 `10 + 7 + 2×40 + 3 + 4×2 + 2 = 110초`로 2분 선점보다 짧습니다(새 기기 시작 예산, 마지막 FCM 요청, OAuth connect/read 갱신 최대 두 번, 서버 정리, Redis 작업과 성공 집합 크기 조회). 시간 설정의 근거는 `ConsumerTimingProperties` KDoc에 있습니다. SDK 9.10.0의 package-private builder를 작은 연결 클래스에서 사용하므로 SDK 교체 시 실제 SDK 재시도 테스트를 확인해야 합니다.
 
 처리 중 소비자가 죽으면 선점 만료 후 남은 재시도에서 새 소비자가 처리합니다. 선점은 자동 연장하지 않습니다. JVM 정지 등으로 처리 시간이 TTL을 넘으면 **유실보다 중복을 허용**하며, 이전 소유자의 완료/삭제는 소유자 비교로 차단합니다.
 
@@ -157,3 +157,17 @@ Spring Cloud AWS BOM과 SQS 스타터는 4.1.1입니다. 본문 문자열을 Jac
 롱폴링은 20초, 동시 처리와 폴당 최대 수신은 각각 2개입니다. 라이브러리 기본값인 10초·10개·10개보다 공유 dev 태스크의 FCM/API 부하를 줄이고 빈 큐 요청 간격을 늘립니다. 빈 큐에서 인스턴스·큐당 폴러 하나를 가정하면 분당 약 3회, 하루 4320회, 30일 129600회의 ReceiveMessage 요청이 발생합니다. 오류·재시작·추가 인스턴스는 별도입니다.
 
 상관 ID와 `manyak.push.consume.result{outcome=success|retry|discard}`는 기존 소비자가 기록합니다. SQS에는 DltHandler가 없어 DLQ 도착 시 애플리케이션의 `outcome=dlq`를 증가시키지 않습니다. 기존 공통 카운터에 dlq가 0으로 등록될 수 있지만 SQS DLQ 도착 수를 뜻하지 않습니다. DLQ 모니터링은 [KNK-1381](https://kimandkang.atlassian.net/browse/KNK-1381)의 CloudWatch 경보에서 처리합니다.
+
+## 공지와 캠페인 이동 대상
+
+정보성 공지 `NOTICE`는 SERVICE 자격으로 보내며 Android HIGH, 웹은 data의 제목·본문을 사용합니다. `data`의 `campaignId`, `noticeId`, `title`, `body`, `deepLink`를 그대로 전달합니다. 딥링크는 서버가 `https://manyak.app/notices/{noticeId}`로 준비합니다. 광고성 공지는 MARKETING `PROMOTION`으로 같은 공지 경로를 사용합니다. 스토리 이동 대상이 있는 `PROMOTION`은 `storyId`와 `/stories/{storyId}` 절대 딥링크를 전달하며, 이동 대상이 없으면 딥링크 없이 웹 기본 주소를 사용합니다.
+
+## 큐 발송 결과 보고
+
+소비자가 완료 또는 폐기를 Redis에 기록한 뒤 서버의 `POST /internal/push-deliveries`를 동기 호출 1회로 보고합니다. 기존 `MANYAK_SERVER_INTERNAL_BASE_URL`과 `MANYAK_INTERNAL_SHARED_SECRET`을 그대로 사용하므로 새 환경변수는 필요하지 않습니다. 운영 주소는 서버 사설 DNS, 개발 주소는 같은 태스크의 서버입니다. 공통 HTTP 빌더의 연결 1초·읽기 2초 제한과 상관 헤더 전달을 적용합니다.
+
+보고 필드는 `messageId`, `type`, `kind`, `recipientId`, 선택적 `campaignId`, `outcome`, `reason`, `deliveredDevices`, `failedDevices`, `completedAt`입니다. 누적 성공 기기 집합이 1개 이상이면 `DELIVERED`, 발송했으나 성공이 없으면 `UNDELIVERED`, 만료·자격 거절처럼 발송 없이 끝나면 `DISCARDED`입니다. 도달 기기 수는 재전달 이전 성공도 포함한 Redis 집합 크기이고 실패 기기 수는 마지막 처리의 영구 실패와 무효 토큰 수입니다. FCM 도달은 제공자가 수락한 수이며 실제 표시 수와 다릅니다.
+
+재전달, 선점 중, 이미 완료된 메시지 재수신에는 보고하지 않습니다. 보고의 연결 오류·시간 초과·오류 응답은 `push_delivery_report_failed` WARN에 메시지 식별자와 상태 또는 예외 클래스만 남깁니다. 재시도하지 않으며 완료·폐기와 큐 확인 결과를 유지합니다. 보고 실패분은 통계에서 누락될 수 있습니다. 동기 `/internal/notifications`에는 큐 메시지 식별자가 없어 이 보고를 수행하지 않습니다.
+
+결과 보고만 추가하면 서버 API를 먼저 배포합니다. 공지 시나리오와 함께 적용할 때는 알림 서비스의 `NOTICE` 허용을 먼저 배포하고, 서버의 결과 보고 API·공지 발행을 배포합니다. 그 사이 서버 API의 404 보고 실패와 통계 누락을 수용합니다. 푸시 데이터 처리는 웹·Android와 함께 배포합니다. 배포 후 보고 WARN, 서버 내부 API 상태와 결과 행 증가, 큐 적체·실패 큐 경보를 확인합니다.

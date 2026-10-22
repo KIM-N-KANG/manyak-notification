@@ -1,11 +1,15 @@
 package com.knk.manyak.notification.push.consumer
 
+import com.knk.manyak.notification.push.client.PushDeliveryClient
+import com.knk.manyak.notification.push.dto.PushDeliveryReport
+import com.knk.manyak.notification.push.dto.PushDeliveryOutcome
 import com.knk.manyak.notification.push.dto.NotificationOutcome
 import com.knk.manyak.notification.push.service.NotificationService
 import io.micrometer.core.instrument.MeterRegistry
 import org.slf4j.LoggerFactory
 import org.slf4j.MDC
 import org.springframework.stereotype.Component
+import java.time.Clock
 import java.time.Duration
 import java.util.UUID
 
@@ -14,6 +18,8 @@ class NotificationConsumer(
     private val service: NotificationService,
     private val store: DeliveryStore,
     private val registry: MeterRegistry,
+    private val reporter: PushDeliveryClient,
+    private val clock: Clock,
     private val timing: ConsumerTimingProperties = ConsumerTimingProperties(),
 ) {
     private val log = LoggerFactory.getLogger(javaClass)
@@ -42,7 +48,23 @@ class NotificationConsumer(
                         else -> ConsumeResult.DISCARD
                     }
                     if (outcome == ConsumeResult.RETRY) store.release(message.messageId, owner)
-                    else store.complete(message.messageId, owner)
+                    else {
+                        // 집합 조회 실패도 완료 전에 재전달한다. 완료 후에는 보고 실패로 소비를 되돌리지 않는다.
+                        val delivered = store.sentCount(message.messageId)
+                        store.complete(message.messageId, owner)
+                        reporter.report(PushDeliveryReport(
+                            messageId = message.messageId, type = message.type, kind = message.kind,
+                            recipientId = message.recipientId, campaignId = message.data["campaignId"],
+                            outcome = when {
+                                delivered > 0 -> PushDeliveryOutcome.DELIVERED
+                                response.outcome == NotificationOutcome.FAILED -> PushDeliveryOutcome.UNDELIVERED
+                                else -> PushDeliveryOutcome.DISCARDED
+                            },
+                            reason = response.reason, deliveredDevices = delivered,
+                            failedDevices = response.failed + response.unregistered,
+                            completedAt = clock.instant(),
+                        ))
+                    }
                     outcome
                 }
             }

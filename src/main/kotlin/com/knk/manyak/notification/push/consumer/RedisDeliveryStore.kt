@@ -26,6 +26,9 @@ class RedisDeliveryStore(
         redis.execute(RELEASE, listOf(processedKey(messageId)), owner)
     }
 
+    override fun sentCount(messageId: String): Int =
+        checkNotNull(redis.opsForSet().size(sentKey(messageId))).toInt()
+
     override fun wasSent(messageId: String, token: String): Boolean =
         redis.opsForSet().isMember(sentKey(messageId), hash(token)) == true
 

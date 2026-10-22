@@ -1,8 +1,9 @@
 ### 동기 알림 발송 API 검증
-### 준비: 서버 내부 자격 및 토큰 삭제 API, 세 환경변수 설정 후 SERVER_PORT=8081 ./gradlew bootRun.
+### 준비: 서버 내부 자격 조회·토큰 삭제·결과 보고 API, 세 환경변수 설정 후 SERVER_PORT=8081 ./gradlew bootRun.
 ### internalSecret은 커밋하지 않는 IntelliJ HTTP 환경 파일에 넣습니다.
 ### recipientId는 테스트 전용 회원 publicId입니다. 유효 요청은 실제 기기에 알림을 보냅니다.
 @baseUrl = http://localhost:8081
+@serverBaseUrl = http://localhost:8080
 @recipientId = 00000000-0000-4000-8000-000000000001
 
 ### 헬스체크
@@ -208,4 +209,50 @@ Accept: image/png
         client.assert(response.body.path === "/internal/notifications" && Array.isArray(response.body.details), "공통 본문");
         client.assert(response.headers.valueOf("X-Manyak-Request-Id") === "req-outside-mvc", "상관 ID");
     });
+%}
+
+### 정보성 공지: SERVICE 자격, 광고 표기 없는 문구와 공지 딥링크
+POST {{baseUrl}}/internal/notifications
+X-Manyak-Internal-Secret: {{internalSecret}}
+Content-Type: application/json
+
+{
+  "recipientId": "{{recipientId}}", "kind": "SERVICE", "type": "NOTICE",
+  "data": {
+    "type": "NOTICE", "campaignId": "00000000-0000-4000-8000-000000000002",
+    "noticeId": "00000000-0000-4000-8000-000000000003", "title": "공지", "body": "공지 본문",
+    "deepLink": "https://manyak.app/notices/00000000-0000-4000-8000-000000000003"
+  }
+}
+
+### 스토리 이동 캠페인: MARKETING 자격과 스토리 딥링크
+POST {{baseUrl}}/internal/notifications
+X-Manyak-Internal-Secret: {{internalSecret}}
+Content-Type: application/json
+
+{
+  "recipientId": "{{recipientId}}", "kind": "MARKETING", "type": "PROMOTION",
+  "data": {
+    "type": "PROMOTION", "campaignId": "00000000-0000-4000-8000-000000000002",
+    "storyId": "00000000-0000-4000-8000-000000000004", "title": "(광고) 새 스토리", "body": "스토리를 확인하세요",
+    "deepLink": "https://manyak.app/stories/00000000-0000-4000-8000-000000000004"
+  }
+}
+
+### 서버 결과 보고 API 수동 확인: 서버 주소에 호출, 동기 발송 API는 보고하지 않음
+### 테스트용 messageId로 결과 행이 생성되며 같은 ID 재보고는 처음 행을 유지함
+POST {{serverBaseUrl}}/internal/push-deliveries
+X-Manyak-Internal-Secret: {{internalSecret}}
+X-Manyak-Request-Id: req_manual_delivery
+Content-Type: application/json
+
+{
+  "messageId": "story-completed:00000000-0000-4000-8000-000000000005",
+  "recipientId": "{{recipientId}}", "type": "STORY_COMPLETED", "kind": "SERVICE",
+  "outcome": "DELIVERED", "reason": "OK", "deliveredDevices": 2, "failedDevices": 0,
+  "completedAt": "2026-10-22T01:00:00Z"
+}
+
+> {%
+    client.test("보고 수락", () => client.assert(response.status === 204, "204"));
 %}
