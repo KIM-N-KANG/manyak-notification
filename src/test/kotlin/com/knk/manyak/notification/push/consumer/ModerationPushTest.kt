@@ -102,7 +102,7 @@ class ModerationPushTest {
     }
 
     @ParameterizedTest
-    @CsvSource("STORY_COMPLETED,SERVICE", "ATTENDANCE_REMINDER,MARKETING", "PROMOTION,MARKETING")
+    @CsvSource("CREDIT_EXPIRY_REMINDER,SERVICE", "STORY_COMPLETED,SERVICE", "ATTENDANCE_REMINDER,MARKETING", "PROMOTION,MARKETING")
     fun `기존 타입의 허용 kind와 반대 kind 거부를 유지한다`(type: String, kind: PushKind) {
         val existing = message().copy(type = type, kind = kind, data = mapOf("type" to type))
         assertThatCode { existing.validate() }.doesNotThrowAnyException()
