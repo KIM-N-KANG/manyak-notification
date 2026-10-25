@@ -40,6 +40,12 @@ class ConsumerOutcomeTest {
         `when`(ex.httpResponse).thenReturn(response)
         return ex
     }
+    @ParameterizedTest @ValueSource(longs = [-1, 0])
+    fun `이프 소멸 안내의 유효 기한과 같거나 지나면 발송 없이 폐기한다`(offset: Long) {
+        val expired = message.copy(type = "CREDIT_EXPIRY_REMINDER", data = mapOf("type" to "CREDIT_EXPIRY_REMINDER"), expiresAt = now.plusSeconds(offset))
+        assertThat(consumer.onMessage(expired)).isEqualTo(ConsumeResult.DISCARD)
+        verifyNoInteractions(messaging, client)
+    }
     @AfterEach fun clear() { MDC.clear() }
 
     @ParameterizedTest @ValueSource(ints = [400, 401, 403, 404])
