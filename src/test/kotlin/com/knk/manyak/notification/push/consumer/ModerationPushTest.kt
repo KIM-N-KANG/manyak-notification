@@ -91,6 +91,21 @@ class ModerationPushTest {
         assertThatCode { message().validate() }.doesNotThrowAnyException()
     }
 
+    @Test fun `공개 중단은 SERVICE로 허용하고 MARKETING과 불일치하는 data type은 거부한다`() {
+        val takenDown = message().copy(
+            messageId = "story-taken-down:story-id:1893456000000",
+            type = "STORY_TAKEN_DOWN",
+            data = mapOf("type" to "STORY_TAKEN_DOWN", "storyId" to "story-id",
+                "title" to "스토리 공개가 제한됐어요", "body" to "공개 중단 안내",
+                "deepLink" to "https://manyak.app/studio?utm_source=push&utm_medium=push&utm_campaign=story_taken_down&utm_content=story_taken_down"),
+        )
+        assertThatCode { takenDown.validate() }.doesNotThrowAnyException()
+        assertThatThrownBy { takenDown.copy(kind = PushKind.MARKETING).validate() }
+            .isInstanceOf(IllegalArgumentException::class.java)
+        assertThatThrownBy { takenDown.copy(data = takenDown.data + ("type" to "STORY_COMPLETED")).validate() }
+            .isInstanceOf(IllegalArgumentException::class.java)
+    }
+
     @Test fun `검수 완료를 MARKETING으로 보내면 거부한다`() {
         assertThatThrownBy { message().copy(kind = PushKind.MARKETING).validate() }
             .isInstanceOf(IllegalArgumentException::class.java)
