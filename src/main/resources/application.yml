@@ -30,6 +30,9 @@ management:
     sampling:
       probability: ${MANYAK_TRACING_SAMPLING:1.0}
   opentelemetry:
+    resource-attributes:
+      # 여러 태스크의 누적 카운터가 같은 시계열에 섞이지 않도록 기동별 식별자를 둔다.
+      service.instance.id: ${random.uuid}
     tracing:
       export:
         otlp:
