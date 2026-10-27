@@ -18,8 +18,8 @@ data class PushMessage(
 ) {
     fun validate() {
         require(schemaVersion == 1 && messageId.isNotBlank() && requestId.isNotBlank() && sessionId.isNotBlank())
-        require(type in setOf("STORY_COMPLETED", "STORY_MODERATION_COMPLETED", "NOTICE", "CREDIT_EXPIRY_REMINDER", "ATTENDANCE_REMINDER", "PROMOTION") && data["type"] == type)
-        require(kind == if (type in setOf("STORY_COMPLETED", "STORY_MODERATION_COMPLETED", "NOTICE", "CREDIT_EXPIRY_REMINDER")) PushKind.SERVICE else PushKind.MARKETING)
+        require(type in setOf("STORY_COMPLETED", "STORY_MODERATION_COMPLETED", "STORY_TAKEN_DOWN", "NOTICE", "CREDIT_EXPIRY_REMINDER", "ATTENDANCE_REMINDER", "PROMOTION") && data["type"] == type)
+        require(kind == if (type in setOf("STORY_COMPLETED", "STORY_MODERATION_COMPLETED", "STORY_TAKEN_DOWN", "NOTICE", "CREDIT_EXPIRY_REMINDER")) PushKind.SERVICE else PushKind.MARKETING)
     }
 
     fun request() = NotificationRequest(recipientId, kind, type, data, expiresAt)

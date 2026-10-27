@@ -123,7 +123,7 @@ docker run --rm --name manyak-notification -p 8081:8080 \
 
 `SPRING_PROFILES_ACTIVE=local`에서 `push.requested`를 그룹 `notification`으로 소비합니다. `SPRING_KAFKA_BOOTSTRAP_SERVERS` 기본값은 `localhost:9092`, Redis는 `SPRING_DATA_REDIS_HOST`/`SPRING_DATA_REDIS_PORT`로 설정합니다. compose는 각각 `kafka:19092`, `redis:6379`를 주입합니다. 토픽 세 개는 infra의 `kafka-init`이 생성해야 하며 자동 생성하지 않습니다.
 
-`messageId`, UUID `recipientId`, `kind`, `type`, 문자열 맵 `data`, `requestId`, `sessionId`, `schemaVersion: 1`이 필수이고 `expiresAt`은 선택입니다. `data.type`은 최상위 `type`과 일치해야 합니다. `STORY_COMPLETED`, `STORY_MODERATION_COMPLETED`, `NOTICE`, `CREDIT_EXPIRY_REMINDER`는 SERVICE, `ATTENDANCE_REMINDER`와 `PROMOTION`은 MARKETING입니다. 검수 완료는 `story-moderation:{submissionId}:{attempt}`로 회차를 구분하며, data의 `submissionId`·`status`·선택적 `storyId`·`deepLink`를 그대로 전달합니다. 서버 local 발송과 같이 Android는 HIGH·data-only·TTL 미지정이며, 검수 완료의 웹 제목·본문은 data에 있을 때만 사용하고 별도 문구를 만들지 않습니다. 메시지에 동의나 토큰을 저장하지 않고 매 처리마다 서버 자격을 재조회합니다.
+`messageId`, UUID `recipientId`, `kind`, `type`, 문자열 맵 `data`, `requestId`, `sessionId`, `schemaVersion: 1`이 필수이고 `expiresAt`은 선택입니다. `data.type`은 최상위 `type`과 일치해야 합니다. `STORY_COMPLETED`, `STORY_MODERATION_COMPLETED`, `STORY_TAKEN_DOWN`, `NOTICE`, `CREDIT_EXPIRY_REMINDER`는 SERVICE, `ATTENDANCE_REMINDER`와 `PROMOTION`은 MARKETING입니다. 검수 완료는 `story-moderation:{submissionId}:{attempt}`로 회차를 구분하며, data의 `submissionId`·`status`·선택적 `storyId`·`deepLink`를 그대로 전달합니다. 서버 local 발송과 같이 Android는 HIGH·data-only·TTL 미지정이며, 검수 완료의 웹 제목·본문은 data에 있을 때만 사용하고 별도 문구를 만들지 않습니다. 메시지에 동의나 토큰을 저장하지 않고 매 처리마다 서버 자격을 재조회합니다.
 
 완료·폐기는 `notification:processed:{messageId}`에 7일 기록합니다. 처리 중 키는 SET NX와 기본 2분 TTL로 선점하고 RETRY 때 해제합니다. 기본 10초의 처리 예산이 지나면 새 기기 발송을 시작하지 않고 다음 전달에서 이어갑니다. 성공 기기의 SHA-256 토큰 해시는 `notification:sent:{messageId}`에 7일 보존하여 재전달 때 제외합니다. Redis 기록 실패 시 재시도하며, FCM 성공과 Redis 기록 사이 장애는 중복 발송 가능성이 있습니다.
 
@@ -173,3 +173,5 @@ Spring Cloud AWS BOM과 SQS 스타터는 4.1.1입니다. 본문 문자열을 Jac
 결과 보고만 추가하면 서버 API를 먼저 배포합니다. 공지 시나리오와 함께 적용할 때는 알림 서비스의 `NOTICE` 허용을 먼저 배포하고, 서버의 결과 보고 API·공지 발행을 배포합니다. 그 사이 서버 API의 404 보고 실패와 통계 누락을 수용합니다. 푸시 데이터 처리는 웹·Android와 함께 배포합니다. 배포 후 보고 WARN, 서버 내부 API 상태와 결과 행 증가, 큐 적체·실패 큐 경보를 확인합니다.
 
 이프 소멸 예정 안내는 `credit-expiry:{회원 공개 식별자}:{KST 날짜}`를 식별자로 쓰며 회원별 `expiresAt` 뒤에는 폐기합니다. 데이터는 `type`, `title`, `body`, `deepLink`와 발송 시 추가하는 `recipientId`만 포함합니다. Android는 HIGH이며 TTL은 유효 기한까지입니다. 이 허용 타입 변경을 서버보다 먼저 배포해야 합니다.
+
+공개 중단 시나리오 `STORY_TAKEN_DOWN`은 SERVICE로 허용하며 `data.type`도 같아야 합니다. 이 허용 변경을 서버의 공개 중단 메시지 발행보다 먼저 배포합니다(NOTIFICATION 4-2-9, 6-4).
