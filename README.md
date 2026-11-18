@@ -1,6 +1,6 @@
 # manyak-notification
 
-manyak-server에서 발송 자격을 확인한 뒤 FCM으로 발송하는 알림 서비스입니다. 회원과 토큰은 서버가 관리합니다. 로컬에서는 Kafka를 소비하고 Redis에 멱등 이력을 저장하며, 기존 동기 API도 유지합니다. PostgreSQL은 사용하지 않습니다. Kotlin 2.2.21, Spring Boot 4.1.2, Java 21을 사용합니다.
+manyak-server에서 발송 자격을 확인한 뒤 FCM으로 발송하는 알림 서비스입니다. 회원과 토큰은 서버가 관리합니다. 로컬에서는 Kafka를 소비하고 Redis에 멱등 이력을 저장하며, 기존 동기 API도 유지합니다. PostgreSQL은 사용하지 않습니다. Kotlin 2.3.21, Spring Boot 4.1.2, Java 25를 사용합니다.
 
 ## 설정
 
@@ -16,7 +16,7 @@ Firebase 서비스 계정은 앱과 웹이 사용하는 Firebase 프로젝트에
 
 ## 로컬 실행
 
-Java 21을 설치하고 위 세 환경변수를 주입합니다. 서버는 자격 조회, `DELETE /internal/push-tokens`, `POST /internal/push-deliveries`를 지원하는 버전이어야 합니다. 연결은 1초, 읽기는 2초에 타임아웃됩니다.
+Java 25를 설치하고 위 세 환경변수를 주입합니다. 서버는 자격 조회, `DELETE /internal/push-tokens`, `POST /internal/push-deliveries`를 지원하는 버전이어야 합니다. 연결은 1초, 읽기는 2초에 타임아웃됩니다.
 
 ```sh
 export MANYAK_SERVER_INTERNAL_BASE_URL=http://localhost:8080
