@@ -9,3 +9,4 @@
 - PR 본문의 Jira 번호는 `[KNK-번호](https://kimandkang.atlassian.net/browse/KNK-번호)` 링크로 씁니다. PR 생성 후 본인을 assignee로 지정합니다.
 - main/dev 직접 push는 하지 않습니다. 최초 골격 부트스트랩만 승인된 예외입니다.
 - 변경 후 `./gradlew test`로 검증합니다. FCM, 발송 API, DB, 큐는 해당 작업에서 필요할 때 추가합니다.
+- dev push는 dev 앱 호스트(EC2 한 대, KNK-2102)에 배포됩니다. 배포 잡이 `:dev`를 승격한 뒤 SSM 문서 `manyak-dev-host-deploy-notification`으로 그 커밋 이미지를 띄웁니다. 호스트 `deploy.sh`는 새 컨테이너의 Docker 헬스가 통과하면 옛 컨테이너를 내리고, 실패하면 새 컨테이너만 지웁니다. dev 환경 변수·시크릿은 manyak-terraform `modules/app-host`가 관리하고, 되돌리기는 같은 문서를 `image=rollback`으로 실행합니다. 운영(main)은 지금처럼 ECS `manyak-prod-notification`입니다.
