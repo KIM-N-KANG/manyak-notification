@@ -1,0 +1,3 @@
+# gitleaks 오탐(KNK-2111 도입 때 히스토리 전체 검사에서 판별). 커밋 지문(커밋:파일:규칙:줄)으로만 좁게 뺀다.
+# 테스트가 실행 중에 KeyPairGenerator로 만든 RSA 키를 PEM 머리말로 감싸는 코드. 키 값은 소스에 없다.
+890ce5278003fb2886aee93c811b4cefbb406fbc:src/test/kotlin/com/knk/manyak/notification/push/config/FcmConfigTest.kt:private-key:50
