@@ -1,5 +1,7 @@
 # manyak-notification
 
+manyak-notification은 마냑의 푸시 알림을 보내는 서비스입니다. 서버가 쌓은 알림 발송 요청을 SQS 큐에서 받아, 서버에 수신자의 발송 자격을 확인한 뒤 FCM으로 푸시를 보내고 결과를 서버에 알립니다. 마냑 전체에서 맡는 자리는 서버 README의 [1-2. 시스템 구성도](https://github.com/KIM-N-KANG/manyak-server#1-2-시스템-구성도)에서, 자세한 설계는 [2-9. 알림 파이프라인](https://github.com/KIM-N-KANG/manyak-server#2-9-알림-파이프라인)에서 볼 수 있습니다. Kotlin 2.3.21, Spring Boot 4.1.2, Java 25로 만들었습니다.
+
 manyak-server에서 발송 자격을 확인한 뒤 FCM으로 발송하는 알림 서비스입니다. 회원과 토큰은 서버가 관리합니다. 로컬에서는 Kafka를 소비하고 Redis에 멱등 이력을 저장하며, 기존 동기 API도 유지합니다. PostgreSQL은 사용하지 않습니다. Kotlin 2.3.21, Spring Boot 4.1.2, Java 25를 사용합니다.
 
 ## 설정
