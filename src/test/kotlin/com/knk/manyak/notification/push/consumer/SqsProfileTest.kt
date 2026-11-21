@@ -5,6 +5,7 @@ import io.awspring.cloud.sqs.listener.MessageListenerContainerRegistry
 import io.awspring.cloud.sqs.listener.SqsMessageListenerContainer
 import io.awspring.cloud.sqs.listener.acknowledgement.handler.AcknowledgementMode
 import io.micrometer.core.instrument.MeterRegistry
+import io.micrometer.observation.ObservationRegistry
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry
 import org.assertj.core.api.Assertions.assertThat
 import org.awaitility.Awaitility.await
@@ -116,6 +117,20 @@ class SqsProfileTest {
                 assertThat(deleted).containsExactlyInAnyOrder("receipt-0", "receipt-1")
                 assertThat(mockingDetails(sqs).invocations.map { it.method.name })
                     .doesNotContain("changeMessageVisibility", "changeMessageVisibilityBatch", "sendMessage", "sendMessageBatch")
+            }
+    }
+
+    // 브로커는 프로필이 아니라 manyak.push.broker로 고른다(KNK-2125). 홈서버 dev는 Kafka로 받는다.
+    @Test fun `dev도 broker=kafka면 Kafka 리스너와 클라이언트만 등록한다`() {
+        runner.withUserConfiguration(KafkaConsumerConfig::class.java)
+            .withBean(ObservationRegistry::class.java, { ObservationRegistry.NOOP })
+            .withPropertyValues("spring.profiles.active=dev", "manyak.push.broker=kafka",
+                "spring.cloud.aws.sqs.enabled=false", "spring.kafka.bootstrap-servers=127.0.0.1:1")
+            .run { context ->
+                assertThat(context).hasNotFailed().hasSingleBean(KafkaNotificationListener::class.java)
+                    .hasSingleBean(KafkaConsumerConfig::class.java)
+                    .doesNotHaveBean(SqsNotificationListener::class.java)
+                    .doesNotHaveBean(SqsAsyncClient::class.java)
             }
     }
 
