@@ -2,12 +2,12 @@ package com.knk.manyak.notification.push.consumer
 
 import io.awspring.cloud.sqs.annotation.SqsListener
 import org.springframework.beans.factory.annotation.Value
-import org.springframework.context.annotation.Profile
+import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty
 import org.springframework.stereotype.Component
 import tools.jackson.databind.ObjectMapper
 
 @Component
-@Profile("dev | prod")
+@ConditionalOnProperty(name = ["manyak.push.broker"], havingValue = "sqs")
 class SqsNotificationListener(
     private val mapper: ObjectMapper,
     private val consumer: NotificationConsumer,
