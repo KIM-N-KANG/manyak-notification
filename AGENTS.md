@@ -24,12 +24,9 @@
 
 배포는 `.github/workflows/docker-image.yml`이 합니다.
 
-- **dev push는 홈서버 dev 스택에 반영**됩니다(KNK-2125, manyak-terraform `homeserver/dev`).
-  - 배포 잡(`deploy-dev`)이 최신 SHA 게이트 뒤에서 GHCR `:<sha7>`를 `:dev`로 옮깁니다. 배포 명령은 보내지 않습니다.
-  - 홈서버 updater가 1분마다 `:dev` 다이제스트를 확인해 바뀌었으면 pull하고 컨테이너를 다시 만듭니다. 교체하는 동안 잠깐 멈춥니다(무중단 아님).
-  - dev notification은 홈서버의 Kafka(`push.requested` 토픽)를 소비합니다(`MANYAK_PUSH_BROKER=kafka`). 운영은 SQS(`sqs`)입니다. dev EC2, SSM 배포, SQS, dev ECR 경로는 없습니다.
-  - dev 환경 변수는 manyak-terraform `homeserver/dev/compose.yaml`에, 비밀값은 홈서버의 `secrets/notification.env`(레포에 없음)에 있습니다.
-  - 되돌리기는 홈서버 compose에서 notification `image`를 불변 태그(`:<sha7>`)로 바꾸고 `docker compose up -d notification`을 실행합니다.
+- **dev push는 dev 환경에 반영**됩니다. dev 브랜치에 머지하면 배포 잡(`deploy-dev`)이 최신 SHA 게이트 뒤에서 GHCR `:<sha7>`를 `:dev`로 옮기고, dev 환경이 그 이미지를 자동으로 받아 교체합니다. dev 서버 주소는 `dev-api.manyak.app`입니다.
+  - dev notification은 Kafka(`push.requested` 토픽)를 소비합니다(`MANYAK_PUSH_BROKER=kafka`). 운영은 SQS(`sqs`)입니다.
+  - 옛 dev EC2, SSM 배포, SQS, dev ECR 경로는 없습니다.
 - **main push는 운영 EC2 앱 호스트 한 대(태그 `manyak:host=manyak-prod-host`, KNK-2106)에 배포**됩니다.
   - 빌드 잡이 ECR에 `:<sha7>`를 push합니다. 배포 잡(`deploy-prod`)은 최신 main SHA 게이트 뒤에서 SSM 문서 `manyak-prod-host-deploy-notification`으로 호스트 `deploy.sh`를 부릅니다.
   - notification은 들어오는 요청이 없어 프록시를 거치지 않습니다. 새 컨테이너의 Docker 헬스가 healthy가 되면 옛 컨테이너를 내리고, 실패하면 새 컨테이너만 지웁니다(옛 notification이 계속 SQS를 소비). 출력의 `notification: deployed <image>` 줄로 배포를 확인합니다.

@@ -84,14 +84,14 @@ Android는 data-only이며 서비스 알림은 HIGH, 광고 알림은 NORMAL입�
 
 `Docker Image` 워크플로는 dev 대상 PR과 수동 실행에서 테스트와 이미지 빌드만 하고 이미지를 올리지 않습니다. 플랫폼은 `linux/amd64,linux/arm64`이고, 빌드 단계에서는 불변 태그(`:<short-sha>`)만 붙입니다.
 
-dev push는 홈서버 dev 스택에 반영됩니다(KNK-2125, manyak-terraform `homeserver/dev`).
+dev push는 dev 환경에 반영됩니다.
 
 1. 빌드 잡이 테스트 후 `ghcr.io/kim-n-kang/manyak-notification:<short-sha>`를 올립니다.
 2. concurrency가 없는 사전 잡에서 최신 dev SHA인지 확인합니다. 오래된 빌드는 배포 대기열에 들어가지 않습니다.
-3. 배포 잡이 승격 직전에 SHA를 다시 확인하고, `docker buildx imagetools create`로 그 이미지를 `:dev`로 옮깁니다. 멀티아키 인덱스를 유지합니다. 배포 명령은 보내지 않습니다.
-4. 홈서버 updater가 1분마다 `:dev` 다이제스트를 확인해 바뀌었으면 pull하고 notification 컨테이너를 다시 만듭니다. 교체하는 동안 잠깐 멈춥니다.
+3. 배포 잡이 승격 직전에 SHA를 다시 확인하고, `docker buildx imagetools create`로 그 이미지를 `:dev`로 옮깁니다. 멀티아키 인덱스를 유지합니다.
+4. dev 환경이 `:dev` 이미지를 자동으로 받아 교체합니다. dev 서버 주소는 `dev-api.manyak.app`입니다.
 
-dev에는 EC2, SSM 배포, SQS, ECR이 없습니다. dev notification은 홈서버 Kafka를 소비하고(`MANYAK_PUSH_BROKER=kafka`), 환경 변수는 manyak-terraform `homeserver/dev/compose.yaml`, 비밀값은 홈서버 `secrets/notification.env`에 있습니다. 되돌리기는 홈서버 compose에서 notification `image`를 불변 태그로 바꾸고 `docker compose up -d notification`을 실행합니다.
+dev notification은 Kafka를 소비합니다(`MANYAK_PUSH_BROKER=kafka`). 옛 dev EC2, SSM 배포, SQS, ECR 경로는 없습니다.
 
 main push는 ECR에 `:<short-sha>`를 올린 뒤 운영 EC2 앱 호스트(`manyak-prod-host`)에 SSM 문서 `manyak-prod-host-deploy-notification`으로 배포하고, 성공한 뒤에만 `:latest`를 옮깁니다. 운영 경로와 되돌리기는 [AGENTS.md](AGENTS.md)의 "배포"를 봅니다.
 
