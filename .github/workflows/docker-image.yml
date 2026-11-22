@@ -125,8 +125,8 @@ jobs:
             echo "latest=false" >> "$GITHUB_OUTPUT"
           fi
 
-  # dev 푸시(GHCR 갱신) 후 → :dev 승격. dev 서버는 홈서버에서 돌고(KNK-2125, manyak-terraform homeserver/dev),
-  # 홈서버 updater가 1분마다 :dev 다이제스트를 확인해 스스로 pull한다. 예전 EC2 앱 호스트 SSM 배포는 전환과 함께 뺐다.
+  # dev 푸시(GHCR 갱신) 후 → :dev 승격. dev 환경이 :dev 다이제스트를 확인해 스스로 pull한다(KNK-2125).
+  # 예전 EC2 앱 호스트 SSM 배포는 전환과 함께 뺐다.
   # 잡 이름은 체크 이름을 바꾸지 않으려고 그대로 둔다.
   deploy-dev:
     name: Deploy to app host (dev)
