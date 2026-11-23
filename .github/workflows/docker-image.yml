@@ -55,8 +55,9 @@ jobs:
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
 
+      # dev 푸시는 GHCR만, main 푸시는 ECR과 GHCR에 같은 이미지를 올린다(KNK-2126, OCI 운영 호스트 전환 준비).
       - name: Log in to GHCR
-        if: github.event_name == 'push' && github.ref == 'refs/heads/dev'
+        if: github.event_name == 'push' && (github.ref == 'refs/heads/dev' || github.ref == 'refs/heads/main')
         uses: docker/login-action@v3
         with:
           registry: ghcr.io
@@ -80,14 +81,15 @@ jobs:
         run: |
           # :dev 승격은 deploy-dev의 최신 SHA 게이트와 서비스 안정화 대기 뒤에 한다.
           SHORT_SHA="${GITHUB_SHA::7}"
-          IMAGE="$GHCR_IMAGE"
           # 수동 실행은 기존처럼 테스트·빌드만 한다. ECR 인증·push는 main push 전용이다.
-          if [ "$GITHUB_EVENT_NAME" = "push" ] && [ "$GITHUB_REF" = "refs/heads/main" ]; then
-            IMAGE="${{ steps.ecr-login.outputs.registry }}/${ECR_REPOSITORY}"
-          fi
+          # main push는 같은 빌드를 GHCR에도 올린다(한 번에 두 레지스트리라 다이제스트가 같다). OCI 운영 호스트는
+          # GHCR :prod를 따라가고, 전환 전에는 아무도 GHCR 운영 이미지를 받지 않는다.
           {
             echo "tags<<EOF"
-            echo "${IMAGE}:${SHORT_SHA}"
+            if [ "$GITHUB_EVENT_NAME" = "push" ] && [ "$GITHUB_REF" = "refs/heads/main" ]; then
+              echo "${{ steps.ecr-login.outputs.registry }}/${ECR_REPOSITORY}:${SHORT_SHA}"
+            fi
+            echo "${GHCR_IMAGE}:${SHORT_SHA}"
             echo "EOF"
           } >> "$GITHUB_OUTPUT"
 
@@ -197,6 +199,7 @@ jobs:
     permissions:
       contents: read
       id-token: write
+      packages: write # GHCR :prod 이동(KNK-2126)
     # 취소보다 큐잉이 안전하다(호스트로 보낸 배포 명령은 잡을 취소해도 되돌릴 수 없다). 세 앱 레포 사이의
     # 직렬화는 호스트의 deploy.sh 가 flock 으로 한다(예전 "Wait for active service to settle" 단계가 하던 일).
     concurrency:
@@ -284,3 +287,24 @@ jobs:
         run: |
           docker buildx imagetools create --tag "${IMAGE%:*}:latest" "$IMAGE"
           echo "✅ :latest -> ${GITHUB_SHA::7}"
+
+      # AWS 배포가 성공한 이미지만 GHCR :prod 로 옮긴다(KNK-2126). OCI 운영 호스트의 updater 가 :prod 다이제스트를 따라
+      # 배포한다. 전환 전에는 아무도 :prod 를 받지 않아 영향이 없다. 직렬화 구간 안이라 옛 실행이 태그를 되돌리지 않는다.
+      # 이 변경 전에 빌드된 커밋은 GHCR 에 :<sha7> 이 없어 건너뛴다(실패 아님). 그 밖의 조회 실패는 실패로 남긴다.
+      # 되돌리기는 수동 워크플로 prod-rollback.yml 이 :prod 를 입력 sha 로 옮긴다.
+      - name: Promote current SHA to GHCR :prod
+        if: steps.gate.outputs.latest == 'true'
+        run: |
+          echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u "${{ github.actor }}" --password-stdin
+          SOURCE="${GHCR_IMAGE}:${GITHUB_SHA::7}"
+          if ! OUT=$(docker buildx imagetools inspect "$SOURCE" 2>&1); then
+            echo "$OUT"
+            if printf '%s' "$OUT" | grep -qiE 'not found|manifest unknown|manifest_unknown|does not exist|no such manifest'; then
+              echo "::notice::GHCR 에 $SOURCE 가 없어 :prod 를 옮기지 않습니다(이 변경 전에 빌드된 커밋)"
+              exit 0
+            fi
+            echo "::error::GHCR 이미지 조회가 매니페스트 부재가 아닌 이유로 실패했습니다. :prod 는 그대로입니다(AWS 배포는 끝남)"
+            exit 1
+          fi
+          docker buildx imagetools create --tag "${GHCR_IMAGE}:prod" "$SOURCE"
+          echo "✅ GHCR :prod -> ${GITHUB_SHA::7}"

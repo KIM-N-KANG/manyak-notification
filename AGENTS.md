@@ -33,3 +33,4 @@
   - 배포가 끝난 뒤에만 `:latest`를 그 SHA로 옮깁니다.
   - 되돌리기는 같은 SSM 문서를 `image=rollback`(직전 이미지, 호스트 `/data/state` 기록) 또는 `image=<ECR 이미지>:<sha7>`로 실행합니다.
   - 운영 환경 변수와 시크릿은 manyak-terraform `envs/prod/app-host.tf`의 `app_host_defs`가 관리합니다. 바꾼 뒤에는 SSM 문서 `image=current`로 다시 배포해야 반영됩니다.
+  - OCI 운영 호스트 전환 준비(KNK-2126): 빌드 잡은 main 이미지를 GHCR `ghcr.io/kim-n-kang/manyak-notification:<sha7>`에도 같은 빌드로 push합니다. 배포 잡은 AWS 배포가 성공한 뒤에만 GHCR `:prod`를 그 SHA로 옮깁니다. OCI 운영 호스트는 `:prod`를 따라 배포하며, 전환 전에는 아무도 받지 않습니다. `:prod` 되돌리기는 수동 워크플로 `prod-rollback.yml`(입력 `sha`, main 커밋만)이고 AWS 쪽 되돌리기와는 따로입니다.
