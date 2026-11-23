@@ -11,7 +11,7 @@ import org.apache.kafka.common.serialization.StringSerializer
 import org.springframework.beans.factory.annotation.Value
 import org.springframework.context.annotation.Bean
 import org.springframework.context.annotation.Configuration
-import org.springframework.context.annotation.Profile
+import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty
 import org.springframework.kafka.annotation.EnableKafka
 import org.springframework.kafka.config.ConcurrentKafkaListenerContainerFactory
 import org.springframework.kafka.core.DefaultKafkaConsumerFactory
@@ -21,9 +21,10 @@ import org.springframework.kafka.listener.ContainerProperties
 import org.springframework.kafka.retrytopic.RetryTopicConfigurationSupport
 import org.springframework.scheduling.concurrent.ThreadPoolTaskScheduler
 
-// Boot Kafka 자동 구성을 추가하지 않아 dev/prod에는 Kafka 클라이언트·리스너가 생성되지 않는다.
+// Boot Kafka 자동 구성을 추가하지 않아 broker=kafka가 아니면 Kafka 클라이언트와 리스너가 생성되지 않는다.
+// 브로커는 프로필이 아니라 manyak.push.broker로 고른다(KNK-2125, 기본값은 application.yml).
 @Configuration
-@Profile("local & !dev & !prod")
+@ConditionalOnProperty(name = ["manyak.push.broker"], havingValue = "kafka")
 @EnableKafka
 class KafkaConsumerConfig(
     @Value("\${spring.kafka.bootstrap-servers:localhost:9092}") private val bootstrapServers: String,

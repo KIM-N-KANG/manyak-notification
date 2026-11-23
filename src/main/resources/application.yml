@@ -70,6 +70,20 @@ manyak:
     web:
       icon-url: ${MANYAK_PUSH_WEB_ICON_URL:https://manyak.app/icons/icon-192.png}
 
+# 수신 브로커(manyak.push.broker: kafka 또는 sqs, KNK-2125). 프로필이 아니라 이 값으로 리스너를 고른다.
+# 기본값: 프로필 없음은 없음(리스너 없음), local은 kafka, dev와 prod는 sqs(아래 문서가 나중이라 local,dev도 sqs).
+# dev 환경은 MANYAK_PUSH_BROKER=kafka, SPRING_KAFKA_BOOTSTRAP_SERVERS, SPRING_CLOUD_AWS_SQS_ENABLED=false를 준다.
+# sqs는 dev나 prod 프로필에서만 쓴다. SQS 자동 구성(spring.cloud.aws.sqs.enabled)이 아래 dev | prod 문서에서만 켜져서,
+# 다른 프로필에서 sqs를 고르면 @SqsListener가 등록되지 않아 아무것도 받지 않는다.
+---
+spring:
+  config:
+    activate:
+      on-profile: local
+manyak:
+  push:
+    broker: ${MANYAK_PUSH_BROKER:kafka}
+
 ---
 spring:
   config:
@@ -84,3 +98,6 @@ spring:
         enabled: true
         observation-enabled: true
         queue-not-found-strategy: FAIL
+manyak:
+  push:
+    broker: ${MANYAK_PUSH_BROKER:sqs}

@@ -2,7 +2,7 @@ package com.knk.manyak.notification.push.consumer
 
 import io.micrometer.core.instrument.MeterRegistry
 import org.slf4j.LoggerFactory
-import org.springframework.context.annotation.Profile
+import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty
 import org.springframework.kafka.annotation.BackOff
 import org.springframework.kafka.annotation.DltHandler
 import org.springframework.kafka.annotation.KafkaListener
@@ -12,7 +12,7 @@ import org.springframework.stereotype.Component
 import tools.jackson.databind.ObjectMapper
 
 @Component
-@Profile("local & !dev & !prod")
+@ConditionalOnProperty(name = ["manyak.push.broker"], havingValue = "kafka")
 class KafkaNotificationListener(
     private val mapper: ObjectMapper,
     private val consumer: NotificationConsumer,
