@@ -13,11 +13,6 @@ permissions:
 
 env:
   GHCR_IMAGE: ghcr.io/kim-n-kang/manyak-notification
-  ECR_REPOSITORY: manyak-notification
-  AWS_REGION: ap-northeast-2
-  # 운영 단일 EC2 앱 호스트(KNK-2106, manyak-terraform envs/prod/app-host.tf). 배포는 서비스별 SSM 문서로 한다.
-  PROD_DEPLOY_DOCUMENT: manyak-prod-host-deploy-notification
-  PROD_HOST_TAG: manyak-prod-host
 
 jobs:
   build:
@@ -25,7 +20,6 @@ jobs:
     permissions:
       contents: read
       packages: write
-      id-token: write # main push의 ECR 인증. AWS 역할 신뢰 정책은 main으로 제한한다.
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
@@ -55,7 +49,8 @@ jobs:
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
 
-      # dev 푸시는 GHCR만, main 푸시는 ECR과 GHCR에 같은 이미지를 올린다(KNK-2126, OCI 운영 호스트 전환 준비).
+      # dev, main 푸시는 GHCR :<sha7>로 올린다. 운영(OCI)은 GHCR :prod를 따라간다(KNK-2126). 수동 실행은 테스트와 빌드만 한다.
+      # :dev, :prod 승격은 각 배포 잡의 최신 SHA 게이트 뒤에서 한다.
       - name: Log in to GHCR
         if: github.event_name == 'push' && (github.ref == 'refs/heads/dev' || github.ref == 'refs/heads/main')
         uses: docker/login-action@v3
@@ -64,34 +59,9 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Configure AWS credentials for ECR (OIDC)
-        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
-        uses: aws-actions/configure-aws-credentials@v4
-        with:
-          role-to-assume: ${{ vars.AWS_PROD_ROLE_ARN }}
-          aws-region: ${{ env.AWS_REGION }}
-
-      - name: Log in to Amazon ECR
-        id: ecr-login
-        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
-        uses: aws-actions/amazon-ecr-login@v2
-
-      - name: Resolve image tags
+      - name: Resolve image tag
         id: image-tags
-        run: |
-          # :dev 승격은 deploy-dev의 최신 SHA 게이트와 서비스 안정화 대기 뒤에 한다.
-          SHORT_SHA="${GITHUB_SHA::7}"
-          # 수동 실행은 기존처럼 테스트·빌드만 한다. ECR 인증·push는 main push 전용이다.
-          # main push는 같은 빌드를 GHCR에도 올린다(한 번에 두 레지스트리라 다이제스트가 같다). OCI 운영 호스트는
-          # GHCR :prod를 따라가고, 전환 전에는 아무도 GHCR 운영 이미지를 받지 않는다.
-          {
-            echo "tags<<EOF"
-            if [ "$GITHUB_EVENT_NAME" = "push" ] && [ "$GITHUB_REF" = "refs/heads/main" ]; then
-              echo "${{ steps.ecr-login.outputs.registry }}/${ECR_REPOSITORY}:${SHORT_SHA}"
-            fi
-            echo "${GHCR_IMAGE}:${SHORT_SHA}"
-            echo "EOF"
-          } >> "$GITHUB_OUTPUT"
+        run: echo "tags=${GHCR_IMAGE}:${GITHUB_SHA::7}" >> "$GITHUB_OUTPUT"
 
       - name: Build Docker image
         uses: docker/build-push-action@v6
@@ -191,35 +161,25 @@ jobs:
             echo "latest=false" >> "$GITHUB_OUTPUT"
           fi
 
-  # main 푸시(ECR 갱신) 후 → 운영 앱 호스트에 SSM 문서로 배포 + 헬스 스모크 (KNK-2106, 예전 ECS 는 KNK-963)
+  # main 푸시 후 → GHCR :prod 를 이 커밋으로 옮기고, OCI 운영 호스트가 바꿔 띄울 시간을 기다린 뒤 공개 스모크 (KNK-2126).
+  # CI 는 호스트에 명령을 보내지 않는다. 호스트의 updater(systemd 타이머, 앞 실행이 끝나고 60초 뒤 다시 돈다)가
+  # :prod 다이제스트가 지금 이미지와 다르면 deploy.sh 로 배포한다. notification 은 들어오는 요청이 없어 프록시를 거치지 않는다:
+  # 새 컨테이너가 Docker 헬스 healthy 가 되면 옛 것을 내린다(잠깐 둘이 함께 소비해도 Redis 처리 기록으로 중복 발송을 막는다).
+  # 새 컨테이너가 헬스를 못 넘으면 옛 notification 이 계속 소비하고, 그 다이제스트는 실패로 기록돼 다시 시도하지 않는다.
+  # 정본: manyak-terraform oci/prod/scripts/update.sh, oci/prod/deploy.sh
   deploy-prod:
     name: Deploy to app host (prod)
     needs: [build, check-main-head]
     if: github.event_name == 'push' && github.ref == 'refs/heads/main' && needs.check-main-head.outputs.latest == 'true'
     permissions:
       contents: read
-      id-token: write
-      packages: write # GHCR :prod 이동(KNK-2126)
-    # 취소보다 큐잉이 안전하다(호스트로 보낸 배포 명령은 잡을 취소해도 되돌릴 수 없다). 세 앱 레포 사이의
-    # 직렬화는 호스트의 deploy.sh 가 flock 으로 한다(예전 "Wait for active service to settle" 단계가 하던 일).
+      packages: write # GHCR :prod 이동
+    # :prod 이동을 직렬화(큐잉)한다. 늦게 끝난 옛 실행이 :prod 를 되돌리지 않게 한다.
     concurrency:
       group: manyak-prod-notification-deploy
       cancel-in-progress: false
     runs-on: ubuntu-latest
     steps:
-      - name: Configure AWS credentials (OIDC)
-        uses: aws-actions/configure-aws-credentials@v4
-        with:
-          role-to-assume: ${{ vars.AWS_PROD_ROLE_ARN }}
-          aws-region: ${{ env.AWS_REGION }}
-
-      - name: Log in to Amazon ECR
-        id: ecr-login
-        uses: aws-actions/amazon-ecr-login@v2
-
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
-
       # 대기열에서 기다리는 동안 들어온 새 main push 는 그쪽 실행이 배포한다.
       - name: Gate - latest main SHA before deploy
         id: gate
@@ -234,77 +194,65 @@ jobs:
             echo "latest=false" >> "$GITHUB_OUTPUT"
           fi
 
-      # 운영 앱 호스트의 deploy.sh 를 SSM 문서(manyak-prod-host-deploy-notification)로 부른다(KNK-2106).
-      # notification 은 들어오는 요청이 없어 프록시를 거치지 않는다: 새 컨테이너가 Docker 헬스 healthy 가 되면 옛 것을
-      # 내린다(잠깐 둘이 함께 SQS 를 소비해도 Redis 처리 기록으로 중복 발송을 막는다). 헬스를 못 넘으면 새 컨테이너를
-      # 지우고 실패로 끝나며 옛 notification 이 계속 소비한다. 불변 태그(:<sha7>)로 배포하고, 호스트가 현재·직전 이미지를
-      # 기록한다(image=rollback 으로 되돌림). 배포 확인: 예전의 배포 id·태스크 헬스 대조 대신, deploy.sh 가 끝에 찍는
-      # "deployed <image>" 줄이 요청한 이미지인지 본다.
-      - name: Deploy to prod app host (SSM)
-        id: deploy
+      - name: Set up Docker Buildx
         if: steps.gate.outputs.latest == 'true'
-        env:
-          REGISTRY: ${{ steps.ecr-login.outputs.registry }}
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GHCR
+        if: steps.gate.outputs.latest == 'true'
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      # 지금 :prod 다이제스트를 남겨 두고(스모크가 실패하면 되돌릴 곳) :prod 를 이 커밋으로 옮긴다. 이것이 배포다.
+      # 이 커밋의 빌드 잡이 :<sha7> 을 올린 뒤라 없으면 실패다. manifest 를 복사하므로 멀티아키 인덱스가 유지된다.
+      - name: Move GHCR :prod to current SHA
+        id: promote
+        if: steps.gate.outputs.latest == 'true'
         run: |
-          IMAGE="${REGISTRY}/${ECR_REPOSITORY}:${GITHUB_SHA::7}"
-          echo "IMAGE=$IMAGE" >> "$GITHUB_ENV"
+          IMAGE="${GHCR_IMAGE}:${GITHUB_SHA::7}"
           docker buildx imagetools inspect "$IMAGE" >/dev/null
-          CID=$(aws ssm send-command --document-name "$PROD_DEPLOY_DOCUMENT" \
-            --targets "Key=tag:manyak:host,Values=$PROD_HOST_TAG" --parameters "image=$IMAGE" \
-            --timeout-seconds 600 --query Command.CommandId --output text)
-          echo "SSM 명령 $CID ($IMAGE)"
-          # 기동(약 1분)과 다른 레포 배포의 잠금 대기(server 드레인 최대 240초 포함)까지 넉넉히 기다린다(최대 30분).
-          IID=""
-          for i in $(seq 1 180); do
-            sleep 10
-            if [ -z "$IID" ] || [ "$IID" = "None" ]; then
-              IID=$(aws ssm list-command-invocations --command-id "$CID" --query 'CommandInvocations[0].InstanceId' --output text)
-              [ -n "$IID" ] && [ "$IID" != "None" ] || { echo "명령 전달 대기 $i"; continue; }
+          if PREV=$(docker buildx imagetools inspect "${GHCR_IMAGE}:prod" --format '{{.Manifest.Digest}}' 2>&1); then
+            [[ "$PREV" =~ ^sha256:[a-f0-9]{64}$ ]] || { echo "::error::지금 :prod 다이제스트를 읽지 못했습니다: $PREV"; exit 1; }
+          elif printf '%s' "$PREV" | grep -qiE 'not found|manifest unknown|manifest_unknown|does not exist|no such manifest'; then
+            echo "::notice:::prod 가 아직 없습니다(첫 배포). 스모크가 실패해도 되돌릴 곳이 없습니다"
+            PREV=""
+          else
+            echo "$PREV"; echo "::error::지금 :prod 조회가 매니페스트 부재가 아닌 이유로 실패했습니다. :prod 는 그대로입니다"; exit 1
+          fi
+          echo "prev=$PREV" >> "$GITHUB_OUTPUT"
+          docker buildx imagetools create --tag "${GHCR_IMAGE}:prod" "$IMAGE"
+          echo "moved=true" >> "$GITHUB_OUTPUT"
+          echo "✅ GHCR :prod -> ${GITHUB_SHA::7} (직전 ${PREV:-없음})"
+
+      # notification 은 공개 주소가 없어 CI 가 교체를 직접 볼 수 없다. updater 주기(약 1분)와 기동(약 30초)을 넉넉히
+      # 기다린 뒤 공개 api 헬스로 운영이 살아 있는지 본다. 교체 성공과 실패는 updater 알림과 운영 로그로 확인한다.
+      - name: Wait for OCI updater
+        if: steps.promote.outputs.moved == 'true'
+        run: sleep 180
+
+      - name: Smoke test (api /actuator/health)
+        if: steps.promote.outputs.moved == 'true'
+        run: |
+          for i in $(seq 1 12); do
+            if curl -fsS --max-time 10 https://api.manyak.app/actuator/health | grep -q '"status":"UP"'; then
+              echo "✅ health UP"; exit 0
             fi
-            STATUS=$(aws ssm get-command-invocation --command-id "$CID" --instance-id "$IID" --query Status --output text)
-            case "$STATUS" in
-              Pending|InProgress|Delayed) echo "배포 $STATUS — 대기 $i/180 (10s)" ;;
-              *) break ;;
-            esac
+            echo "health 대기 $i/12 (15s)..."; sleep 15
           done
-          OUT=$(aws ssm get-command-invocation --command-id "$CID" --instance-id "$IID" \
-            --query '[StandardOutputContent,StandardErrorContent]' --output text || true)
-          echo "$OUT"
-          if [ "$STATUS" != "Success" ]; then
-            echo "::error::운영 앱 호스트 배포가 $STATUS 로 끝났습니다. 옛 notification 이 계속 소비합니다. 위 출력과 CloudWatch /manyak/prod/app-host 확인"
-            exit 1
-          fi
-          if ! printf '%s\n' "$OUT" | grep -qF "notification: deployed $IMAGE as "; then
-            echo "::error::배포 명령은 성공했지만 출력에서 'deployed $IMAGE' 를 찾지 못했습니다 — 호스트의 /data/state/notification.image 확인"
-            exit 1
-          fi
-          echo "✅ 운영 앱 호스트 배포 완료: $IMAGE"
+          echo "::error::health 200/UP 확인 실패 — 운영 로그 확인"; exit 1
 
-      # 배포가 끝난 뒤에만 :latest 를 옮긴다. 호스트는 불변 태그로 배포하므로 :latest 는 호스트 기록이 없을 때의
-      # 기본값과 옛 ECS 로 되돌릴 때 쓰인다. 실패한 배포는 :latest 를 건드리지 않아 예전의 ":latest 복구" 단계가 필요 없다.
-      - name: Promote current SHA to :latest
-        if: steps.gate.outputs.latest == 'true'
+      # 스모크가 실패하면 :prod 를 직전 다이제스트로 되돌린다. updater 가 다음 주기에 직전 이미지로 다시 배포한다
+      # (새 컨테이너가 처음부터 못 떴다면 지금 이미지와 같아 아무것도 하지 않는다). 완료는 기다리지 않는다 — 잡은 이미 실패다.
+      - name: Roll back GHCR :prod on failure
+        if: failure() && steps.promote.outputs.moved == 'true'
+        env:
+          PREV: ${{ steps.promote.outputs.prev }}
         run: |
-          docker buildx imagetools create --tag "${IMAGE%:*}:latest" "$IMAGE"
-          echo "✅ :latest -> ${GITHUB_SHA::7}"
-
-      # AWS 배포가 성공한 이미지만 GHCR :prod 로 옮긴다(KNK-2126). OCI 운영 호스트의 updater 가 :prod 다이제스트를 따라
-      # 배포한다. 전환 전에는 아무도 :prod 를 받지 않아 영향이 없다. 직렬화 구간 안이라 옛 실행이 태그를 되돌리지 않는다.
-      # 이 변경 전에 빌드된 커밋은 GHCR 에 :<sha7> 이 없어 건너뛴다(실패 아님). 그 밖의 조회 실패는 실패로 남긴다.
-      # 되돌리기는 수동 워크플로 prod-rollback.yml 이 :prod 를 입력 sha 로 옮긴다.
-      - name: Promote current SHA to GHCR :prod
-        if: steps.gate.outputs.latest == 'true'
-        run: |
-          echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u "${{ github.actor }}" --password-stdin
-          SOURCE="${GHCR_IMAGE}:${GITHUB_SHA::7}"
-          if ! OUT=$(docker buildx imagetools inspect "$SOURCE" 2>&1); then
-            echo "$OUT"
-            if printf '%s' "$OUT" | grep -qiE 'not found|manifest unknown|manifest_unknown|does not exist|no such manifest'; then
-              echo "::notice::GHCR 에 $SOURCE 가 없어 :prod 를 옮기지 않습니다(이 변경 전에 빌드된 커밋)"
-              exit 0
-            fi
-            echo "::error::GHCR 이미지 조회가 매니페스트 부재가 아닌 이유로 실패했습니다. :prod 는 그대로입니다(AWS 배포는 끝남)"
-            exit 1
+          if [ -z "$PREV" ]; then
+            echo "::warning::직전 :prod 가 없어 되돌리지 않았습니다. 운영 상태를 직접 확인하세요"; exit 0
           fi
-          docker buildx imagetools create --tag "${GHCR_IMAGE}:prod" "$SOURCE"
-          echo "✅ GHCR :prod -> ${GITHUB_SHA::7}"
+          docker buildx imagetools create --tag "${GHCR_IMAGE}:prod" "${GHCR_IMAGE}@${PREV}"
+          echo "::warning::스모크 실패로 GHCR :prod 를 직전 다이제스트($PREV)로 되돌렸습니다. updater 가 1~2분 안에 다시 배포합니다"

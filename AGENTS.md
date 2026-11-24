@@ -25,12 +25,11 @@
 배포는 `.github/workflows/docker-image.yml`이 합니다.
 
 - **dev push는 dev 환경에 반영**됩니다. dev 브랜치에 머지하면 배포 잡(`deploy-dev`)이 최신 SHA 게이트 뒤에서 GHCR `:<sha7>`를 `:dev`로 옮기고, dev 환경이 그 이미지를 자동으로 받아 교체합니다. dev 서버 주소는 `dev-api.manyak.app`입니다.
-  - dev notification은 Kafka(`push.requested` 토픽)를 소비합니다(`MANYAK_PUSH_BROKER=kafka`). 운영은 SQS(`sqs`)입니다.
+  - notification은 dev와 운영 모두 Kafka(`push.requested` 토픽)를 소비합니다(`MANYAK_PUSH_BROKER=kafka`).
   - 옛 dev EC2, SSM 배포, SQS, dev ECR 경로는 없습니다.
-- **main push는 운영 EC2 앱 호스트 한 대(태그 `manyak:host=manyak-prod-host`, KNK-2106)에 배포**됩니다.
-  - 빌드 잡이 ECR에 `:<sha7>`를 push합니다. 배포 잡(`deploy-prod`)은 최신 main SHA 게이트 뒤에서 SSM 문서 `manyak-prod-host-deploy-notification`으로 호스트 `deploy.sh`를 부릅니다.
-  - notification은 들어오는 요청이 없어 프록시를 거치지 않습니다. 새 컨테이너의 Docker 헬스가 healthy가 되면 옛 컨테이너를 내리고, 실패하면 새 컨테이너만 지웁니다(옛 notification이 계속 SQS를 소비). 출력의 `notification: deployed <image>` 줄로 배포를 확인합니다.
-  - 배포가 끝난 뒤에만 `:latest`를 그 SHA로 옮깁니다.
-  - 되돌리기는 같은 SSM 문서를 `image=rollback`(직전 이미지, 호스트 `/data/state` 기록) 또는 `image=<ECR 이미지>:<sha7>`로 실행합니다.
-  - 운영 환경 변수와 시크릿은 manyak-terraform `envs/prod/app-host.tf`의 `app_host_defs`가 관리합니다. 바꾼 뒤에는 SSM 문서 `image=current`로 다시 배포해야 반영됩니다.
-  - OCI 운영 호스트 전환 준비(KNK-2126): 빌드 잡은 main 이미지를 GHCR `ghcr.io/kim-n-kang/manyak-notification:<sha7>`에도 같은 빌드로 push합니다. 배포 잡은 AWS 배포가 성공한 뒤에만 GHCR `:prod`를 그 SHA로 옮깁니다. OCI 운영 호스트는 `:prod`를 따라 배포하며, 전환 전에는 아무도 받지 않습니다. `:prod` 되돌리기는 수동 워크플로 `prod-rollback.yml`(입력 `sha`, main 커밋만)이고 AWS 쪽 되돌리기와는 따로입니다.
+- **main push는 운영에 배포**됩니다. 운영은 OCI VM 한 대이고, 호스트 구성과 설정의 정본은 manyak-terraform `oci/prod`입니다(KNK-2126).
+  - 빌드 잡이 GHCR `ghcr.io/kim-n-kang/manyak-notification:<sha7>`를 push합니다. 배포 잡(`deploy-prod`)은 최신 main SHA 게이트 뒤에서 GHCR `:prod`를 그 SHA로 옮기기만 합니다. CI는 호스트에 들어가지 않습니다.
+  - 호스트의 updater(`oci/prod/scripts/update.sh`, 1분 주기)가 `:prod` 다이제스트가 바뀐 것을 보고 `deploy.sh`로 배포합니다. notification은 들어오는 요청이 없어 프록시를 거치지 않습니다. 새 컨테이너의 Docker 헬스가 healthy가 되면 옛 컨테이너를 내리고, 실패하면 새 컨테이너만 지웁니다(옛 notification이 계속 소비하고, 그 다이제스트는 다시 시도하지 않음).
+  - notification은 공개 주소가 없어 배포 잡이 교체를 직접 보지 못합니다. 3분 기다린 뒤 `api.manyak.app/actuator/health`를 확인하고, 실패하면 `:prod`를 직전 다이제스트로 되돌립니다. 교체 성공과 실패는 updater 알림과 운영 로그로 봅니다.
+  - 되돌리기는 수동 워크플로 `prod-rollback.yml`(입력 `sha`, main 커밋만)로 `:prod`를 직전 릴리스 커밋으로 옮깁니다.
+  - 운영 환경 변수는 manyak-terraform `oci/prod/services/notification.env`, 비밀값은 호스트 `/opt/manyak/secrets/notification.env`에 있습니다. 바꾼 뒤에는 호스트에서 `deploy.sh sync`와 `deploy.sh notification current`로 반영합니다.

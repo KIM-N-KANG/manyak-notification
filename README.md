@@ -93,7 +93,7 @@ dev push는 dev 환경에 반영됩니다.
 
 dev notification은 Kafka를 소비합니다(`MANYAK_PUSH_BROKER=kafka`). 옛 dev EC2, SSM 배포, SQS, ECR 경로는 없습니다.
 
-main push는 ECR에 `:<short-sha>`를 올린 뒤 운영 EC2 앱 호스트(`manyak-prod-host`)에 SSM 문서 `manyak-prod-host-deploy-notification`으로 배포하고, 성공한 뒤에만 `:latest`를 옮깁니다. 운영 경로와 되돌리기는 [AGENTS.md](AGENTS.md)의 "배포"를 봅니다.
+main push는 GHCR에 `:<short-sha>`를 올린 뒤 `:prod`를 그 SHA로 옮깁니다. 운영 호스트가 `:prod`를 따라 스스로 교체합니다. 운영 경로와 되돌리기는 [AGENTS.md](AGENTS.md)의 "배포"를 봅니다.
 
 PR 머지 후 이미지가 게시되면 세 환경변수를 설정한 터미널에서 실행합니다. 아래 서버 주소는 Docker Desktop에서 호스트의 서버 8080에 연결하는 예입니다. Linux에서는 호스트 주소를 환경에 맞게 바꿉니다.
 
