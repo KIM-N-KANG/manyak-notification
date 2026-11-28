@@ -1,6 +1,9 @@
 package com.knk.manyak.notification.push.service
 
 import com.google.firebase.messaging.AndroidConfig
+import com.google.firebase.messaging.ApnsConfig
+import com.google.firebase.messaging.Aps
+import com.google.firebase.messaging.ApsAlert
 import com.google.firebase.messaging.FirebaseMessaging
 import com.google.firebase.messaging.FirebaseMessagingException
 import com.google.firebase.messaging.Message
@@ -58,9 +61,12 @@ class FcmPushSender(
             beforeSend()
             if (alreadySent(it.token)) OUTCOME_SUCCESS
             else {
-                val remaining = expiresAt?.let { end -> Duration.between(clock.instant(), end).toMillis() }
+                val now = clock.instant()
+                val remaining = expiresAt?.let { end -> Duration.between(now, end).toMillis() }
+                // iOS 만료 시각도 Android TTL과 같은 4주 상한을 둔다.
+                val expiration = expiresAt?.let { end -> minOf(end, now.plusMillis(MAX_TTL_MILLIS)) }
                 if (remaining != null && remaining <= 0) OUTCOME_FAILURE
-                else sendTo(messaging, recipientId, it, payload, priority, remaining ?: ttlMillis).also { result ->
+                else sendTo(messaging, recipientId, it, payload, priority, remaining ?: ttlMillis, expiration).also { result ->
                     // SDK 예외 처리 밖에서 기록한다. 저장 실패를 영구 발송 실패로 삼키면 안 된다.
                     if (result == OUTCOME_SUCCESS) onSent(it.token)
                 }
@@ -88,8 +94,13 @@ class FcmPushSender(
         data: Map<String, String>,
         priority: AndroidConfig.Priority,
         ttlMillis: Long?,
+        expiration: Instant?,
     ): String {
         try {
+            // 웹과 iOS는 시스템이 표시하므로 스토리 완성은 Android 앱과 같은 제목과 본문 배치로 만든다.
+            val storyCompleted = data["type"] == "STORY_COMPLETED"
+            val title = if (storyCompleted) STORY_COMPLETED_TITLE else data["title"]
+            val body = if (storyCompleted) data["title"] else data["body"]
             val builder = Message.builder().setToken(deviceToken.token).putAllData(data)
             when (deviceToken.platform) {
                 PushPlatform.ANDROID -> builder.setAndroidConfig(
@@ -97,17 +108,36 @@ class FcmPushSender(
                         .apply { ttlMillis?.let { setTtl(it.coerceAtMost(MAX_TTL_MILLIS)) } }
                         .build(),
                 )
-                // 스토리 완성은 Android 앱과 같은 제목과 본문 배치로 표시한다.
                 PushPlatform.WEB -> builder.setWebpushConfig(
                     WebpushConfig.builder()
                         .setNotification(
                             WebpushNotification.builder()
-                                .setTitle(if (data["type"] == "STORY_COMPLETED") STORY_COMPLETED_TITLE else data["title"])
-                                .setBody(if (data["type"] == "STORY_COMPLETED") data["title"] else data["body"])
+                                .setTitle(title)
+                                .setBody(body)
                                 .setIcon(webIconUrl)
                                 .build(),
                         )
                         .setFcmOptions(WebpushFcmOptions.withLink(data["deepLink"] ?: webBaseUrl))
+                        .build(),
+                )
+                // 배지, 무음 푸시(content-available), 내용 변경(mutable-content), 중요도 상향은 스펙상 넣지 않는다.
+                PushPlatform.IOS -> builder.setApnsConfig(
+                    ApnsConfig.builder()
+                        // Android 우선순위에 맞춘다. 광고(5)는 절전 중인 기기에서 늦거나 묶여 표시될 수 있다.
+                        .putHeader("apns-priority", if (priority == AndroidConfig.Priority.HIGH) "10" else "5")
+                        .apply { expiration?.let { putHeader("apns-expiration", it.epochSecond.toString()) } }
+                        // 회차마다 messageId가 달라 제출본 단위 키로 같은 제출본의 앞 알림을 교체한다.
+                        .apply {
+                            if (data["type"] == "STORY_MODERATION_COMPLETED") {
+                                data["submissionId"]?.let { putHeader("apns-collapse-id", "story-moderation:$it") }
+                            }
+                        }
+                        .setAps(
+                            Aps.builder()
+                                .setAlert(ApsAlert.builder().setTitle(title).setBody(body).build())
+                                .setSound("default")
+                                .build(),
+                        )
                         .build(),
                 )
             }

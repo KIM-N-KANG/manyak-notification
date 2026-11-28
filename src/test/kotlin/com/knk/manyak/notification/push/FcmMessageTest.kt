@@ -151,4 +151,99 @@ class FcmMessageTest {
         assertThat(dataOf(captor.value)).containsAllEntriesOf(data)
     }
 
+    private fun sendIos(
+        data: Map<String, String>,
+        priority: AndroidConfig.Priority = AndroidConfig.Priority.HIGH,
+        expiresAt: Instant? = null,
+    ): Message {
+        val sdk = mock(FirebaseMessaging::class.java)
+        FcmPushSender(sdk, client, registry, clock = clock)
+            .sendToUser(publicId, listOf(PushEligibilityToken("ios", PushPlatform.IOS)), data, priority, expiresAt = expiresAt)
+        val captor = ArgumentCaptor.forClass(Message::class.java)
+        verify(sdk).send(captor.capture())
+        return captor.value
+    }
+
+    @Suppress("UNCHECKED_CAST")
+    private fun apnsHeaders(message: Message) = fieldOf(fieldOf(message, "apnsConfig")!!, "headers") as Map<String, String>
+
+    @Suppress("UNCHECKED_CAST")
+    private fun aps(message: Message) =
+        (fieldOf(fieldOf(message, "apnsConfig")!!, "payload") as Map<String, Any>)["aps"] as Map<String, Any>
+
+    @org.junit.jupiter.params.ParameterizedTest
+    @org.junit.jupiter.params.provider.CsvSource("HIGH,10", "NORMAL,5")
+    fun `IOS는 데이터와 제목 본문 기본 소리를 보내고 서비스와 광고 우선순위를 나눈다`(priority: AndroidConfig.Priority, apnsPriority: String) {
+        val data = mapOf("type" to "NOTICE", "title" to "공지", "body" to "본문", "deepLink" to "https://manyak.app/notices/n")
+        val message = sendIos(data, priority)
+        assertThat(dataOf(message)).containsAllEntriesOf(data).containsEntry("recipientId", publicId.toString())
+        assertThat(fieldOf(message, "androidConfig")).isNull()
+        assertThat(fieldOf(message, "webpushConfig")).isNull()
+        assertThat(fieldOf(message, "notification")).isNull()
+        assertThat(apnsHeaders(message)).containsExactly(org.assertj.core.api.Assertions.entry("apns-priority", apnsPriority))
+        val aps = aps(message)
+        assertThat(aps).containsOnlyKeys("alert", "sound").containsEntry("sound", "default")
+        assertThat(fieldOf(aps["alert"]!!, "title")).isEqualTo("공지")
+        assertThat(fieldOf(aps["alert"]!!, "body")).isEqualTo("본문")
+    }
+
+    @Test
+    fun `IOS 스토리 완성은 고정 제목과 스토리 제목을 표시하고 검수 완료는 데이터 문구를 표시한다`() {
+        val completed = aps(sendIos(mapOf("type" to "STORY_COMPLETED", "title" to "스토리")))["alert"]!!
+        assertThat(fieldOf(completed, "title")).isEqualTo("스토리가 완성됐어요")
+        assertThat(fieldOf(completed, "body")).isEqualTo("스토리")
+        val moderation = aps(sendIos(mapOf("type" to "STORY_MODERATION_COMPLETED", "submissionId" to "s",
+            "title" to "검수를 통과했어요", "body" to "등록이 완료됐어요")))["alert"]!!
+        assertThat(fieldOf(moderation, "title")).isEqualTo("검수를 통과했어요")
+        assertThat(fieldOf(moderation, "body")).isEqualTo("등록이 완료됐어요")
+    }
+
+    @Test
+    fun `IOS 검수 완료는 회차와 무관하게 제출본 교체 키를 붙이고 스토리 완성은 붙이지 않는다`() {
+        // 1회차와 2회차는 messageId만 다르고 푸시 데이터의 submissionId는 같다.
+        repeat(2) {
+            val message = sendIos(mapOf("type" to "STORY_MODERATION_COMPLETED", "submissionId" to "submission-id",
+                "status" to "APPROVED", "title" to "t", "body" to "b"))
+            assertThat(apnsHeaders(message)).containsEntry("apns-collapse-id", "story-moderation:submission-id")
+        }
+        assertThat(apnsHeaders(sendIos(mapOf("type" to "STORY_COMPLETED", "title" to "스토리")))).doesNotContainKey("apns-collapse-id")
+    }
+
+    @Test
+    fun `IOS 만료 시각은 유효 기한의 epoch 초이고 없으면 지정하지 않으며 4주를 넘으면 4주 뒤로 제한한다`() {
+        val midnight = Instant.parse("2030-01-01T15:00:00Z")
+        val reminder = mapOf("type" to "ATTENDANCE_REMINDER", "title" to "(광고) t", "body" to "b")
+        assertThat(apnsHeaders(sendIos(reminder, AndroidConfig.Priority.NORMAL, midnight)))
+            .containsEntry("apns-expiration", midnight.epochSecond.toString())
+        assertThat(apnsHeaders(sendIos(mapOf("type" to "STORY_COMPLETED", "title" to "스토리")))).doesNotContainKey("apns-expiration")
+        assertThat(apnsHeaders(sendIos(reminder, AndroidConfig.Priority.NORMAL, now.plus(java.time.Duration.ofDays(60)))))
+            .containsEntry("apns-expiration", now.plus(java.time.Duration.ofDays(28)).epochSecond.toString())
+    }
+
+    @Test
+    fun `IOS 발송 관측의 플랫폼은 ios다`() {
+        val observations = io.micrometer.observation.ObservationRegistry.create()
+        val stopped = mutableListOf<io.micrometer.observation.Observation.Context>()
+        observations.observationConfig().observationHandler(object : io.micrometer.observation.ObservationHandler<io.micrometer.observation.Observation.Context> {
+            override fun supportsContext(context: io.micrometer.observation.Observation.Context) = true
+            override fun onStop(context: io.micrometer.observation.Observation.Context) { stopped.add(context) }
+        })
+        FcmPushSender(messaging, client, registry, clock = clock, observationRegistry = observations)
+            .sendToUser(publicId, listOf(PushEligibilityToken("ios", PushPlatform.IOS)), mapOf("title" to "t", "body" to "b"))
+        assertThat(stopped.single().getLowCardinalityKeyValue("platform")?.value).isEqualTo("ios")
+    }
+
+    @Test
+    fun `출석 리마인드의 광고 본문은 Android 데이터와 웹과 IOS 알림 본문이 줄바꿈까지 같다`() {
+        val body = "출석하고 받아 가세요.\n수신거부: 마이 > 알림 설정"
+        val data = mapOf("type" to "ATTENDANCE_REMINDER", "title" to "(광고) 이프", "body" to body)
+        sender.sendToUser(publicId, listOf(PushEligibilityToken("a", PushPlatform.ANDROID), PushEligibilityToken("w", PushPlatform.WEB),
+            PushEligibilityToken("i", PushPlatform.IOS)), data, AndroidConfig.Priority.NORMAL)
+        val captor = ArgumentCaptor.forClass(Message::class.java)
+        verify(messaging, org.mockito.Mockito.times(3)).send(captor.capture())
+        val (android, web, ios) = captor.allValues
+        assertThat(dataOf(android)["body"]).isEqualTo(body)
+        assertThat((fieldOf(fieldOf(web, "webpushConfig")!!, "notification") as Map<*, *>)["body"]).isEqualTo(body)
+        assertThat(fieldOf(aps(ios)["alert"]!!, "body")).isEqualTo(body)
+    }
 }
