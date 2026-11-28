@@ -5,7 +5,7 @@ import java.time.Instant
 import java.util.UUID
 
 enum class PushKind { SERVICE, MARKETING }
-enum class PushPlatform { ANDROID, WEB }
+enum class PushPlatform { ANDROID, WEB, IOS }
 enum class NotificationOutcome { SENT, SKIPPED, EXPIRED, FAILED }
 
 data class NotificationRequest(

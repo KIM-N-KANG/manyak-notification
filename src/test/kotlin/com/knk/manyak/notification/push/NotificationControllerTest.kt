@@ -215,6 +215,21 @@ class NotificationControllerTest {
     }
 
     @Test
+    @Suppress("UNCHECKED_CAST")
+    fun `자격 응답의 IOS 토큰에 광고 우선순위와 유효 기한 만료 시각으로 보낸다`() {
+        val expiresAt = now.plusSeconds(60)
+        server.expect { request -> assertThat(request.uri.query).contains("kind=MARKETING") }
+            .andRespond(withSuccess("""{"allowed":true,"reason":"OK","tokens":[{"token":"token","platform":"IOS"}]}""", MediaType.APPLICATION_JSON))
+        send(body(",\"expiresAt\":\"$expiresAt\"").replace("\"SERVICE\"", "\"MARKETING\""))
+            .andExpect(status().isOk).andExpect(jsonPath("$.sent").value(1))
+        val captor = ArgumentCaptor.forClass(Message::class.java)
+        verify(messaging).send(captor.capture())
+        fun field(value: Any, name: String) = value.javaClass.getDeclaredField(name).apply { isAccessible = true }.get(value)
+        assertThat(field(field(captor.value, "apnsConfig"), "headers") as Map<String, String>)
+            .containsEntry("apns-priority", "5").containsEntry("apns-expiration", expiresAt.epochSecond.toString())
+    }
+
+    @Test
     fun `FCM 전체 실패도 요약을 담아 200이다`() {
         allowed(1)
         failFirst(MessagingErrorCode.INVALID_ARGUMENT)
